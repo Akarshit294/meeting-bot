@@ -13,7 +13,7 @@ Where the overnight build (2026-11-04) stands. Newest first inside each section.
 | 5 Fake meeting page | done | `tests/testkit/` (fake Meet from the evidence snapshots, receiver, test camera and screen pages); `tests/test_docker_meeting.py`: the bot joins through the real join code; joins for Asha and Ravi, none for the bot |
 | 6 Sound, both ways | done | PulseAudio in the bot; docker test: the fake meeting hears ~1000 Hz from the camera page, the camera page hears 440 Hz, xebit's `_decode_recall` reads 200 ms 16 kHz frames peaking at 440 Hz with no 1000 Hz; `tests/test_audio.py` (format, pings, reconnect, backoff) |
 | 7 Screen share | done | docker test: `POST output_media` makes the fake meeting receive bright, non-black frames of our page (a window share); a second POST replaces the page in the same share; `DELETE` stops it |
-| 8 Participants and leaving | not started | |
+| 8 Participants and leaving | done | People panel first (opened once with the human mouse), visible tiles as fallback, 10-second rule, the bot skipped; docker tests: joins for the 2 people there, a join at ~20 s, a leave ~10 s after the removal at 40 s, none for the bot, xebit's head count ends at 2; `leave_call` and removal by the host give `call_ended` then `done` with the camera page closed after `call_ended`; `tests/test_participants.py` |
 | 9 Morning kit | not started | |
 | 10 Clean finish | not started | |
 | 11 Camera pictures | not started | |
@@ -83,6 +83,16 @@ Read in Chromium's source (tags 120 to 145) and checked in the bot image:
   page open, microphone on), whether or not the create request had a camera page or an audio endpoint.
 - **If the camera page can't be opened (3 tries), the bot leaves and reports `fatal` / `bot_errored`.**
   A bot in the call with no voice would look fine to xebit but be mute.
+- **When is a read of the people "reliable" (allowed to cause a leave)?** A People-panel read with at least
+  one entry; or a tile read whose number of distinct ids equals the number on Meet's People button; or
+  Meet saying the bot is alone. Any other read can add people but never removes anyone.
+- **A person seen without an id** (no `data-participant-id`) is keyed by name, and takes over the real id
+  the first time it is seen, without a second join. Two people with the same name and different ids are
+  two people.
+- **The bot is skipped** when an entry has "(You)", the own-tile buttons ("Backgrounds and effects",
+  "Reframe"), `data-self-name`, or exactly the bot's typed name (so a guest with exactly the bot's name is
+  not counted either; xebit's own filter does the same). Once an id is known as the bot it stays skipped.
+- **Leaves are not sent for everyone when the bot itself leaves**; xebit learns the end from the status.
 - **Meet is read only with locator reads** (`count`, `inner_text`, `get_attribute`, `is_visible`) and
   screenshots/`page.content()`, which Playwright runs in its isolated world. `all_inner_texts()` and
   `evaluate()` run in Meet's page world, so the bot never uses them on Meet.
