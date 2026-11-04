@@ -20,7 +20,7 @@ from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Playwright
 
 import xwin
-from botconfig import needs_secure_flag, origin, safe_url
+from botconfig import needs_secure_flag, origin, redact, safe_url
 
 PAGE_CLASS = "xbot-pages"
 # Chrome's own bar while sharing ("<site> is sharing a window. Stop sharing / Hide"): it sits at the
@@ -75,13 +75,13 @@ class PageBrowser:
         for attempt in range(1, attempts + 1):
             try:
                 self.camera = self._new_window()
-                self.camera.on("console", lambda m: m.type == "error" and self.log(f"camera page console: {m.text[:200]}"))
+                self.camera.on("console", lambda m: m.type == "error" and self.log(f"camera page console: {redact(m.text)[:200]}"))
                 self.camera.goto(url, wait_until="domcontentloaded", timeout=30_000)
                 self.keep_below(force=True)
                 self.log(f"camera page open: {safe_url(url)}")
                 return True
             except PlaywrightError as exc:
-                self.log(f"camera page {safe_url(url)} did not open (try {attempt}): {str(exc).splitlines()[0]}")
+                self.log(f"camera page {safe_url(url)} did not open (try {attempt}): {redact(str(exc).splitlines()[0])}")
                 self._close_page(self.camera)
                 self.camera = None
                 time.sleep(2 * attempt)
@@ -104,7 +104,7 @@ class PageBrowser:
             self.log(f"screen page open: {safe_url(url)} (window found by title: {found})")
             return found
         except PlaywrightError as exc:
-            self.log(f"screen page {safe_url(url)} did not open: {str(exc).splitlines()[0]}")
+            self.log(f"screen page {safe_url(url)} did not open: {redact(str(exc).splitlines()[0])}")
             self.close_screen()
             return False
 

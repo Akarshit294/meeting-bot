@@ -20,7 +20,7 @@ from playwright.sync_api import Locator, Page, Playwright, sync_playwright
 
 import human_mouse
 import live_session
-from botconfig import BotConfig, ManagerLink, needs_secure_flag, origin, safe_url
+from botconfig import BotConfig, ManagerLink, needs_secure_flag, origin, redact, safe_url
 from control import ControlServer
 from reporting import Reporter
 
@@ -499,8 +499,8 @@ class InCall:
             else:
                 command.reply(404, {"detail": "unknown action"})
         except Exception as exc:  # noqa: BLE001 - a failed share must not end the call
-            self.rep.log(f"{command.action} failed: {type(exc).__name__}: {exc}")
-            command.reply(500, {"detail": f"{type(exc).__name__}: {exc}"[:300]})
+            self.rep.log(redact(f"{command.action} failed: {type(exc).__name__}: {exc}"))
+            command.reply(500, {"detail": redact(f"{type(exc).__name__}: {exc}")[:300]})
 
     def start_share(self, url: str) -> tuple[bool, str]:
         import pages
@@ -788,6 +788,11 @@ def parse_args(argv: list[str] | None = None, environ: dict | None = None) -> ar
             args.url = args.config.meeting_url
             args.name = args.config.bot_name
             args.meet_url = args.meet_url or args.config.meet_url_override
+            options = args.config.options
+            if options.get("per_person_audio"):
+                args.per_person_audio = True
+            if options.get("camera_pictures") is False:
+                args.no_camera_pictures = True
     if not args.url or urlparse(args.url).hostname != "meet.google.com" or not urlparse(args.url).path.strip("/"):
         parser.error("a meeting link like https://meet.google.com/abc-defg-hij is required")
     if args.replay_session:
@@ -897,7 +902,7 @@ def main() -> int:
                 else:
                     outcome, call = attend(p, page, args, rep, args.config, control)
         except Exception as exc:
-            outcome = ("fatal", "bot_errored", f"{type(exc).__name__}: {exc}".splitlines()[0])
+            outcome = ("fatal", "bot_errored", redact(f"{type(exc).__name__}: {exc}".splitlines()[0]))
             if admitted:
                 leave(page)
         if control:

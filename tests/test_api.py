@@ -164,6 +164,13 @@ def test_create_rejects_bad_json(env):
     assert r.status_code == 400 and "detail" in r.json()
 
 
+def test_xbot_options_reach_the_bot_config(env):
+    client, _, store, _ = env
+    bot = make(client, {"meeting_url": MEET, "xbot_options": {"per_person_audio": True, "camera_pictures": False, "x": 1}})
+    cfg = client.get(f"/internal/bots/{bot['id']}/config", headers={"X-Bot-Token": bot_token(store.secret, bot["id"])}).json()
+    assert cfg["options"] == {"per_person_audio": True, "camera_pictures": False}
+
+
 def test_unknown_fields_are_ignored(env):
     client, *_ = env
     make(client, {"meeting_url": MEET, "foo": {"bar": 1}, "variant": {"google_meet": "web_4_core"}})

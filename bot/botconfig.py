@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 import urllib.error
 import urllib.request
@@ -30,6 +31,7 @@ class BotConfig:
     camera_url: str | None = None
     endpoints: list[Endpoint] = field(default_factory=list)
     meet_url_override: str | None = None
+    options: dict = field(default_factory=dict)
 
     def endpoint_for(self, event: str, kind: str) -> Endpoint | None:
         """The first endpoint of this type that asked for this event."""
@@ -54,6 +56,7 @@ class BotConfig:
             camera_url=data.get("camera_url") or None,
             endpoints=endpoints,
             meet_url_override=data.get("meet_url_override") or None,
+            options=data.get("options") if isinstance(data.get("options"), dict) else {},
         )
 
 
@@ -109,6 +112,14 @@ def safe_url(url: str | None) -> str:
         return f"{p.scheme}://{p.hostname or ''}{f':{p.port}' if p.port else ''}{p.path}"
     except ValueError:
         return "<bad url>"
+
+
+URL_IN_TEXT = re.compile(r"\b(?:https?|wss?)://[^\s'\"<>)]+")
+
+
+def redact(text: str) -> str:
+    """Any URL in free text (console messages, errors) cut to host and path."""
+    return URL_IN_TEXT.sub(lambda m: safe_url(m.group(0)), text or "")
 
 
 def origin(url: str | None) -> str | None:

@@ -60,6 +60,14 @@ def test_options_file_has_no_tokens():
     assert "SECRET" not in text and "x.example/cam" in text
 
 
+def test_redact_cuts_urls_in_text():
+    from botconfig import redact
+
+    text = "WebSocket connection to 'wss://x.example/api/ws/demo?token=SECRET' failed; see https://y.example/a?b=SECRET2."
+    out = redact(text)
+    assert "SECRET" not in out and "wss://x.example/api/ws/demo" in out and "https://y.example/a" in out
+
+
 def test_safe_url_drops_the_query():
     assert safe_url("https://h.example:8443/p/q?token=abc#x") == "https://h.example:8443/p/q"
 
