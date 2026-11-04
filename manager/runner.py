@@ -8,6 +8,7 @@ import hashlib
 import hmac
 import json
 import logging
+import os
 import socket
 import urllib.error
 import urllib.request
@@ -93,6 +94,9 @@ class DockerRunner:
 
         s = self.settings
         env = {
+            # Extra settings for every bot: BOT_ENV_<NAME>=value in the manager's environment (.env) reaches
+            # the bot as <NAME>=value (for example BOT_ENV_SPEAKING_CLASSES).
+            **{k.removeprefix("BOT_ENV_"): v for k, v in os.environ.items() if k.startswith("BOT_ENV_") and len(k) > 8},
             "BOT_ID": bot.id,
             "MANAGER_URL": s.internal_url,
             "BOT_TOKEN": token,

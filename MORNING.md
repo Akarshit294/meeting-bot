@@ -141,7 +141,7 @@ person's latest picture) and `speakers.jsonl` (who spoke when).
 | 10 | Leaving | `q`: the bot leaves; `call_ended [bot_received_leave_call]`, then `done` | `events.jsonl` |
 | 11 | Removed by you | Remove the bot from the call in Meet: `call_ended [bot_kicked_from_call]`, then `done` | `events.jsonl`, `bot.log` |
 | 12 | Each person's picture | `pictures sent: <your name> N` grows by about 2 a second; `output/<run>/camera/<your name>.png` looks like your tile; no picture of the bot | `bot.log` (lines starting `pictures:`), the `camera/` folder |
-| 13 | Who spoke when | `output/<run>/speakers.jsonl` has `started`/`stopped` lines with your name when you talk | `speakers.jsonl`, `bot.log` (lines starting `speakers:`) |
+| 13 | Who spoke when | `output/<run>/speakers.jsonl` has `started`/`stopped` lines with your name when you talk. If it stays empty, Meet's speaking indicator wasn't recognised: talk, stop, talk again, and send `timeline.jsonl` (its `tile_classes` lines show it; `docs/per-person-audio.md` section 1) | `speakers.jsonl`, `timeline.jsonl`, `bot.log` |
 | 14 | Live view | The link shows the bot's screen (Meet) | - |
 
 **If Meet refuses the bot** ("You can't join this video call", status `fatal [google_meet_bot_blocked]`):

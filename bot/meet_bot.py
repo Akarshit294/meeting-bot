@@ -548,6 +548,11 @@ class InCall:
             self._confirm_share()
         elif self.sharing_url:
             self._watch_share()
+        if self.audio is not None and hasattr(self.audio, "tick"):  # --per-person-audio
+            try:
+                self.audio.tick()
+            except Exception as exc:  # noqa: BLE001 - experimental: never end the call for it
+                self.rep.log(f"per-person audio tick failed: {type(exc).__name__}: {exc}")
         for extra in (self.pictures, self.speakers):
             if extra:
                 try:

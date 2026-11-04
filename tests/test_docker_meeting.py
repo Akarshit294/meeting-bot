@@ -309,3 +309,16 @@ def test_latest_pictures_in_the_run_folder(run):
 
     folder = ROOT / "output" / "test" / Path(run["run_dir"]).name / "camera"
     assert {p.name for p in folder.glob("*.png")} >= {"Asha.png", "Meera.png"}
+
+
+# ---- task 12, step 1: who spoke when (works in the default, mixed mode too) ----
+
+def test_speaker_timeline(run):
+    from dockerstack import ROOT
+
+    path = ROOT / "output" / "test" / Path(run["run_dir"]).name / "speakers.jsonl"
+    lines = [json.loads(line) for line in path.read_text().splitlines()]
+    assert {line["name"] for line in lines if line["event"] == "started"} >= {"Asha", "Ravi", "Meera"}
+    assert BOT_NAME not in {line["name"] for line in lines}
+    for line in lines:
+        assert line["id"].startswith("spaces/fakeSpace/devices/") and line["event"] in ("started", "stopped")
