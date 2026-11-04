@@ -120,12 +120,19 @@ leave ~10 s after the removal at 40 s, never one for the bot; `leave_call` gives
 
 ## Task 9 — The morning kit
 
+- **`./try.sh <meet link> [bot name]`: the owner's one command.** It starts the service if it is not
+  running (`docker compose up -d --build`), creates a bot for that link with the test pages below as
+  camera and screen pages, and prints the live-view link. Then it waits for keys: `s` = start the
+  screen share, `x` = stop it, `l` = leave, `q` = quit (leaves first). It prints every status change
+  as it happens. It reads the API key from `.env`, and creates `.env` with a random key on the first
+  run. Plain bash + curl (macOS has both).
 - **Test pages served by the manager** for a real-Meet test without xebit: `/test/voice.html`
   (speaks a short sentence or plays a tone every few seconds, and shows the level it hears from the
   call) and `/test/screen.html` (a big moving clock, page title fixed).
-- **`MORNING.md`**: exact steps for the Mac.
-  1. `git pull`, `docker compose up --build` (expected build time), how to check it is up.
-  2. Create a bot with `curl` for a real Meet link, with the test pages as camera and screen pages.
+- **`MORNING.md`**: exact steps for the Mac. Lead with `./try.sh`.
+  1. `git pull`, then `./try.sh <meet link>` (first build time), how to check it is up.
+  2. The same by hand with `curl`, for a real Meet link, with the test pages as camera and screen
+     pages.
      What to do in Meet (admit it), what you should hear and see, how to open the live view, the
      `curl` for screen share on and off, and for leave.
   3. A table: each thing to check, how to see it, and what to send back if it fails (which log,

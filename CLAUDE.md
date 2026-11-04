@@ -26,8 +26,10 @@ Read these before you change anything:
    contract, write the choice in `STATUS.md` under "Decisions", and continue. Stop only when every
    task in `docs/PLAN.md` is done or truly blocked. A blocked task goes in `STATUS.md` with what you
    tried; then move on to the next task.
-2. **Commit and push after every finished task**, to `main`, with a clear message. Never leave work
-   only on the VM. Never force-push.
+2. **Commit and push after every finished task**, with a clear message. If this session was given
+   its own branch, push there; when every task is done, also merge that branch into `main` and push
+   `main`, so the owner only has to `git pull` `main`. Otherwise push to `main`. Never leave work only
+   on the VM. Never force-push.
 3. **Never open a real Google Meet link from this VM.** Calls can't work here (traffic goes through
    a web proxy, so call audio and video can't get out) and Google would see a data-centre address
    and might mark it. Every Meet test runs on the owner's Mac in the morning. Test here with the fake
