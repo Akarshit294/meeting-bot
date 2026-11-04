@@ -62,7 +62,7 @@ LAYOUT_TARGETS = {
 
 QUIET_AFTER_KNOCK = 8
 
-STOPPED: Outcome = ("call_ended", "bot_received_leave_call", "stop requested (SIGINT/SIGTERM)")
+STOPPED: Outcome = ("call_ended", "bot_received_leave_call", "leave requested (manager, SIGINT or SIGTERM)")
 stop_requested = False
 mouse: human_mouse.HumanMouse
 # Called before every click in Meet (service mode: keeps our own page windows under Meet's window).

@@ -1,0 +1,10 @@
+.git
+.venv
+output
+state
+evidence
+spikes
+docs
+**/__pycache__
+**/*.pyc
+.env

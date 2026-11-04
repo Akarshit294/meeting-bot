@@ -9,7 +9,7 @@ Where the overnight build (2026-11-04) stands. Newest first inside each section.
 | 1 Layout and tooling | done | `pytest` runs; Docker tests are marked `docker` |
 | 2 API without Docker | done | `tests/test_api.py`: every endpoint, checked with xebit's `_latest_recall_status_code`, `_result_count` and `create_bot()`'s exact body (`tests/xebit_logic.py`) |
 | 3 Bot takes orders | done | config from the manager, status reports, control server on 8080, run folder with `bot.log`, `--join-only`; `tests/test_bot_orders.py` |
-| 4 Manager runs real containers | not started | |
+| 4 Manager runs real containers | done | Docker SDK runner, compose; `tests/test_docker_manager.py` (create, `joining_call`, leave, `call_ended`, `done`, container gone; a killed container gets `fatal`) |
 | 5 Fake meeting page | not started | |
 | 6 Sound, both ways | not started | |
 | 7 Screen share | not started | |
@@ -18,6 +18,14 @@ Where the overnight build (2026-11-04) stands. Newest first inside each section.
 | 10 Clean finish | not started | |
 | 11 Camera pictures | not started | |
 | 12 Speaker timeline, per-person audio | not started | |
+
+## This VM's build setup (not needed on the Mac)
+
+The VM reaches the internet only through an HTTPS proxy on 127.0.0.1. To build here:
+`python3 scripts/vm-proxy-forward.py 172.17.0.1 44337 &`, the lines of `scripts/vm.env.example` in `.env`,
+and the proxy CA bundle copied to `/tmp/proxyca/agent-proxy-ca.crt`. The Dockerfiles have a `net-proxy`
+stage that only these settings select; on the Mac the default stage is used and none of this is baked in.
+The VM's `.env` also sets `TEST_MEET_URL` so no bot here can ever open real Meet.
 
 ## How to run the tests
 
