@@ -154,6 +154,12 @@ leave ~10 s after the removal at 40 s, never one for the bot; `leave_call` gives
 - Measure one bot's CPU and memory during the fake meeting (`docker stats`), put the numbers in
   `STATUS.md`.
 - Re-read `docs/SPEC.md` and tick every point in `STATUS.md` as done / not done / done differently.
+- **Fresh-eyes review.** Start ONE review subagent. Give it only `docs/SPEC.md`,
+  `docs/xebit-consumer/` and the code, not your notes. Ask it for: (1) every place where what we
+  send or answer differs from what the xebit code reads, and (2) every way a live demo could end
+  by mistake: a false leave, a missing or wrong status, the bot counted as a person, the camera page
+  closed before `call_ended`. Fix what it finds; write the rest in `STATUS.md`.
+- Merge into `main` (`CLAUDE.md` rule 2).
 
 ## Task 11 — Each person's camera picture (only after tasks 1–10)
 

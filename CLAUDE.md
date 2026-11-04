@@ -52,6 +52,24 @@ Read these before you change anything:
    sentences, numbered steps, exact commands. No jargon where a plain word works.
 10. Python 3.12 everywhere (the bot already uses it). Keep dependencies few and pinned.
 
+## How to work
+
+- **Never end your turn at a checkpoint.** Finishing a task is not a reason to stop and report:
+  write the report in `STATUS.md`, push, and start the next task in the same turn. End your turn
+  only when every task in `docs/PLAN.md` is done or truly blocked.
+- **If a message says "keep going"** (the owner's Mac sends one every 90 minutes overnight), read
+  `STATUS.md` and `docs/PLAN.md` and continue with the first task that isn't done. If everything is
+  done, reply "ALL DONE" and nothing else.
+- **One main thread owns the order and git.** Only it commits, merges and pushes.
+- **Subagents (the Agent tool) are welcome for:** looking something up (for example how a Chrome
+  flag matches window titles), writing one self-contained piece that no one else is editing (for
+  example the fake Meet page), and the review in task 10. Give each a narrow brief and the exact
+  files to read. Don't run two Docker builds or Docker tests at the same time: this VM has 4 CPUs
+  and 16 GB. Don't fan out many agents at once: each one costs as much as you do.
+- **Don't get stuck.** If one problem eats more than about an hour, write what you tried in
+  `STATUS.md`, take the simplest working fallback (or skip it), and move on. A finished core with
+  a known gap beats a perfect half.
+
 ## Network in this VM
 
 All outbound traffic goes through an HTTPS proxy. `docker build` steps may need the proxy settings
