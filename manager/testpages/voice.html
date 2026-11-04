@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Test voice</title>
+<style>
+  body { margin: 0; height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center;
+         background: #0b3d2e; color: #fff; font: 22px system-ui, sans-serif; }
+  #meter { width: 70vw; height: 40px; background: #123; border-radius: 20px; overflow: hidden; margin: 20px; }
+  #bar { height: 100%; width: 0; background: #5ef38c; transition: width .2s; }
+  small { opacity: .7; }
+</style></head>
+<body>
+  <h1>Meeting bot: test voice</h1>
+  <p>Every 4 seconds the bot plays a three-note chime into the call. That is its "voice".</p>
+  <div id="meter"><div id="bar"></div></div>
+  <p>What the bot hears from the call: <b id="heard">-</b></p>
+  <small id="info"></small>
+<script>
+// The TEST camera page for a real-Meet test without xebit (docs/PLAN.md task 9).
+// 1. Plays a chime every 4 s (no click needed): people in the call should hear it.
+// 2. Listens with getUserMedia (the call's sound, without the bot) and shows the level.
+// 3. Tells the manager's test receiver what it hears, so ./try.sh can print it.
+const q = new URLSearchParams(location.search);
+const ctx = new AudioContext();
+function chime() {
+  const t = ctx.currentTime;
+  [523.25, 659.25, 783.99].forEach((f, i) => {
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.frequency.value = f; o.type = "sine";
+    g.gain.setValueAtTime(0, t + i * 0.25);
+    g.gain.linearRampToValueAtTime(0.35, t + i * 0.25 + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.001, t + i * 0.25 + 0.6);
+    o.connect(g); g.connect(ctx.destination); o.start(t + i * 0.25); o.stop(t + i * 0.25 + 0.7);
+  });
+}
+setInterval(chime, 4000); chime();
+let analyser = null, peakDb = -100;
+navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } })
+  .then((s) => { const src = ctx.createMediaStreamSource(s); analyser = ctx.createAnalyser(); analyser.fftSize = 2048; src.connect(analyser); })
+  .catch((e) => { document.getElementById("heard").textContent = "no microphone: " + e; });
+setInterval(() => {
+  document.getElementById("info").textContent = "audio: " + ctx.state;
+  if (!analyser) return;
+  const t = new Float32Array(analyser.fftSize); analyser.getFloatTimeDomainData(t);
+  let s = 0; for (const x of t) s += x * x;
+  const db = Math.round(10 * Math.log10(s / t.length + 1e-12));
+  peakDb = Math.max(peakDb, db);
+  document.getElementById("heard").textContent = db + " dB (loudest so far " + peakDb + " dB)";
+  document.getElementById("bar").style.width = Math.max(0, Math.min(100, (db + 80) * 1.4)) + "%";
+}, 250);
+setInterval(() => {
+  if (!q.get("report")) return;
+  fetch(q.get("report"), { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ heard_db: peakDb, audio: ctx.state, mic: !!analyser }) }).catch(() => {});
+  peakDb = -100;
+}, 2000);
+</script></body></html>

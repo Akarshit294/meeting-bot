@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Test camera page</title>
+<style>body{margin:0;background:#123;color:#fff;font:20px sans-serif;display:flex;align-items:center;justify-content:center;height:100vh}</style>
+</head><body>
+<div><h1>Test camera page</h1><p>Plays a 1000 Hz tone (the bot's voice). Hears: <b id="heard">-</b></p></div>
+<script>
+// The TEST camera page (docs/PLAN.md task 5): plays 1000 Hz without a click, and measures what
+// getUserMedia gives it (should be the call's sound). Reports to the test kit.
+const state = { tone: false, gum: null, level_db: null, freq: null, ctx: null, ua: navigator.userAgent };
+const ctx = new AudioContext();
+const o = ctx.createOscillator(); o.frequency.value = 1000;
+const g = ctx.createGain(); g.gain.value = 0.3;
+o.connect(g); g.connect(ctx.destination); o.start(); state.tone = true;
+let analyser = null;
+navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } })
+  .then((s) => {
+    state.gum = s.getAudioTracks()[0].label || "ok";
+    const src = ctx.createMediaStreamSource(s); analyser = ctx.createAnalyser(); analyser.fftSize = 8192; src.connect(analyser);
+  })
+  .catch((e) => { state.gum = "error: " + e; });
+setInterval(() => {
+  state.ctx = ctx.state;
+  if (analyser) {
+    const f = new Float32Array(analyser.frequencyBinCount); analyser.getFloatFrequencyData(f);
+    let best = 1; for (let i = 2; i < f.length; i++) if (f[i] > f[best]) best = i;
+    const t = new Float32Array(analyser.fftSize); analyser.getFloatTimeDomainData(t);
+    let s = 0; for (const x of t) s += x * x;
+    state.freq = Math.round(best * ctx.sampleRate / analyser.fftSize);
+    state.level_db = Math.round(10 * Math.log10(s / t.length + 1e-12));
+    document.getElementById("heard").textContent = `${state.freq} Hz, ${state.level_db} dB`;
+  }
+  fetch("/api/camera-state", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(state) }).catch(() => {});
+}, 500);
+</script></body></html>

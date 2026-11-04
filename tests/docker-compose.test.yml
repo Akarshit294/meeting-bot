@@ -1,0 +1,25 @@
+# Test setup (docs/PLAN.md task 5): the fake meeting + test receiver, and the manager pointed at it.
+# docker compose -f docker-compose.yml -f tests/docker-compose.test.yml up -d --build
+services:
+  manager:
+    environment:
+      TEST_MEET_URL: ${TEST_MEET_URL:-http://testkit:9000/meet/abc-defg-hij}
+      BOT_ARGS: ${TEST_BOT_ARGS:---type-name --knock-delay 2}
+      STATE_FILE: /state/test-bots.json
+      HOST_OUTPUT_DIR: ${PWD}/output/test
+      OUTPUT_DIR: /output/test
+
+  testkit:
+    build:
+      network: ${BUILD_NETWORK:-default}
+      args:
+        NET: ${BUILD_NET:-direct}
+        https_proxy: ${BUILD_HTTPS_PROXY:-}
+      additional_contexts:
+        proxyca: ${BUILD_PROXY_CA_DIR:-./docker/no-proxy}
+      context: .
+      dockerfile: tests/testkit/Dockerfile
+    image: meeting-bot-testkit:latest
+    ports:
+      - "9000:9000"
+    networks: [meeting-bot]

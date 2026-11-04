@@ -1,0 +1,10 @@
+# PulseAudio inside the bot container (docs/SPEC.md 5.1). No sound card: everything is virtual.
+load-module module-native-protocol-unix socket=/tmp/pulse/native auth-anonymous=1
+# The Meet browser plays the call here. Its monitor is the call's sound.
+load-module module-null-sink sink_name=meet_out sink_properties=device.description=meet_out
+# The page browser plays the camera page (the agent's voice) here.
+load-module module-null-sink sink_name=agent_out sink_properties=device.description=agent_out
+# The Meet browser's microphone: what the camera page plays.
+load-module module-remap-source master=agent_out.monitor source_name=agent_mic source_properties=device.description=agent_mic
+set-default-sink meet_out
+set-default-source agent_mic

@@ -1,0 +1,58 @@
+# The service: `docker compose up -d --build` (./try.sh does it for you).
+# - manager: the API on port 8090. It starts one bot container per meeting through the Docker socket.
+# - bot-image: only builds the bot image (meeting-bot:latest); its container exits at once.
+#
+# The BUILD_* variables are only for the overnight build VM, which reaches the internet through a proxy.
+# Leave them unset on the Mac.
+name: meeting-bot
+
+x-build-net: &build-net
+  network: ${BUILD_NETWORK:-default}
+  args:
+    NET: ${BUILD_NET:-direct}
+    https_proxy: ${BUILD_HTTPS_PROXY:-}
+  additional_contexts:
+    proxyca: ${BUILD_PROXY_CA_DIR:-./docker/no-proxy}
+
+services:
+  manager:
+    build:
+      <<: *build-net
+      context: .
+      dockerfile: manager/Dockerfile
+    image: meeting-bot-manager:latest
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      MANAGER_PORT: "8090"  # inside the container; MANAGER_PORT in .env only changes the port on your Mac
+      BOT_IMAGE: meeting-bot:latest
+      MANAGER_INTERNAL_URL: http://manager:8090
+      DOCKER_NETWORK: meeting-bot
+      HOST_OUTPUT_DIR: ${PWD}/output
+      OUTPUT_DIR: /output
+      STATE_FILE: /state/bots.json
+    ports:
+      - "${MANAGER_PORT:-8090}:8090"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./output:/output
+      - ./state:/state
+    networks: [meeting-bot]
+    restart: unless-stopped
+    depends_on:
+      bot-image:
+        condition: service_completed_successfully
+
+  bot-image:
+    build:
+      <<: *build-net
+      context: ./bot
+    image: meeting-bot:latest
+    entrypoint: ["true"]
+    restart: "no"
+    networks: [meeting-bot]
+
+networks:
+  meeting-bot:
+    name: meeting-bot

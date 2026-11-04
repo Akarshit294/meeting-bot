@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Xebit Screencast</title>
+<style>
+  body { margin: 0; width: 100vw; height: 100vh; overflow: hidden; display: flex; flex-direction: column;
+         align-items: center; justify-content: center; font-family: system-ui, sans-serif; color: #fff;
+         background: linear-gradient(120deg, #1a237e, #6a1b9a, #c2185b); background-size: 300% 300%;
+         animation: drift 12s ease infinite; }
+  @keyframes drift { 0% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } 100% { background-position: 0% 50%; } }
+  #clock { font-size: 180px; font-weight: 800; letter-spacing: 4px; font-variant-numeric: tabular-nums; }
+  #ball { position: absolute; width: 60px; height: 60px; border-radius: 50%; background: #ffeb3b; }
+  p { font-size: 28px; opacity: .85; }
+</style></head>
+<body><div id="ball"></div><div id="clock">00:00:00</div><p>Meeting bot: test screen share</p>
+<script>
+// The TEST screen page: a big clock and a moving ball, so a frozen share is easy to spot.
+const clock = document.getElementById("clock"), ball = document.getElementById("ball");
+let x = 40, y = 40, dx = 7, dy = 5;
+setInterval(() => { clock.textContent = new Date().toLocaleTimeString([], { hour12: false }); }, 200);
+setInterval(() => {
+  x += dx; y += dy;
+  if (x < 0 || x > innerWidth - 60) dx = -dx;
+  if (y < 0 || y > innerHeight - 60) dy = -dy;
+  ball.style.left = x + "px"; ball.style.top = y + "px";
+}, 33);
+</script></body></html>
