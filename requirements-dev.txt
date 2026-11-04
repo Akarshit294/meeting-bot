@@ -1,0 +1,8 @@
+# Everything the tests need, on the host (Python 3.12). Install: pip install -r requirements-dev.txt
+-r manager/requirements.txt
+-r bot/requirements.txt
+pytest==9.2.0
+httpx==0.28.1
+numpy==2.5.4
+websockets==17.4
+playwright==1.64.0

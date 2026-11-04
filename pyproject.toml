@@ -1,0 +1,14 @@
+[project]
+name = "meeting-bot"
+version = "1.0.0"
+description = "Self-hosted Google Meet bot with a Recall.ai-compatible API"
+requires-python = ">=3.12"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [".", "bot"]
+# Docker tests are slow and need the images: run them on their own with `pytest -m docker`.
+addopts = "-m 'not docker' -p no:cacheprovider"
+markers = [
+    "docker: needs Docker and the built images (slow). Run with: pytest -m docker",
+]
