@@ -40,3 +40,27 @@ def test_removed_by_the_host():
         request("POST", f"/api/v1/bot/{bot['id']}/leave_call/", key=key)
         time.sleep(3)
         remove_bot_containers()
+
+
+def test_join_only_still_joins_like_the_proven_runs():
+    """The morning fallback (MORNING.md): --join-only = today's join, fake devices, no voice or sound."""
+    compose("up", "-d", "manager", env={"TEST_BOT_ARGS": "--join-only --type-name --knock-delay 2"})
+    wait_http(API + "/health")
+    key = api_key()
+    kit("/api/reset", {})
+    status, bot = request("POST", "/api/v1/bot/", {"meeting_url": "https://meet.google.com/abc-defg-hij",
+                                                   "bot_name": "Join Only"}, key=key)
+    assert status == 201
+    try:
+        wait_status(key, bot["id"], "in_call_not_recording", timeout=180)
+        time.sleep(4)
+        state = kit("/api/state")
+        assert state["phase"] == "in_call" and state["name"] == "Join Only"
+        assert state["mic_on"] is False and state["cam_on"] is False, "join-only keeps the devices off"
+        assert "Fake" in state["mic"].get("label", "") or state["mic"].get("label") == "", state["mic"]
+        request("POST", f"/api/v1/bot/{bot['id']}/leave_call/", key=key)
+        final = wait_status(key, bot["id"], "done", timeout=60)
+        assert codes(final) == ["joining_call", "in_waiting_room", "in_call_not_recording", "call_ended", "done"]
+    finally:
+        remove_bot_containers()
+        compose("up", "-d", "manager")
