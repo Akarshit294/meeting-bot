@@ -40,6 +40,9 @@ exact request body is accepted).
   share. Leave works at any time (before admission it just stops).
 - After `fatal`, report nothing more. After `call_ended`, report `done` when finished.
 - `--join-only` keeps today's behaviour exactly (fake devices, no pages, no audio).
+- **A run folder per bot, like the owner's test folders:** `events.jsonl`, a screenshot at every
+  status (and at every screen-share and participant change), the page HTML at the end, and the
+  bot's full log. On the Mac it lands in `./output/<date>-<time>-<meeting code>/`.
 
 **Done when** unit tests cover config parsing, the status sequence rules and the control server.
 
@@ -139,6 +142,7 @@ leave ~10 s after the removal at 40 s, never one for the bot; `leave_call` gives
      which file).
   4. With xebit: the values to give xebit-api (base URL `http://host.docker.internal:8090/api/v1`,
      the key), and what to watch.
+  5. A **Results** table for the owner to fill in, one row per run, like `bot/JOIN_TEST_RUN.md`.
 - **`STATUS.md`** final: what is done, what was tested here and how, what only the real Meet can
   prove, known gaps, decisions you made.
 
@@ -151,11 +155,33 @@ leave ~10 s after the removal at 40 s, never one for the bot; `leave_call` gives
   `STATUS.md`.
 - Re-read `docs/SPEC.md` and tick every point in `STATUS.md` as done / not done / done differently.
 
+## Task 11 — One audio stream per person (experimental, only after tasks 1–10)
+
+The owner wants this. It is the hardest part, so it comes after the core works, and it stays behind
+a flag (`--per-person-audio`, off by default). The mixed stream from task 6 stays the default, so
+the morning test has a working baseline either way.
+
+- Goal: instead of one `meeting-mix` stream, send one stream per person, in the same frame format
+  (`docs/SPEC.md` 3.2), with that person's participant `id` and `name` (the same ids as the
+  join/leave webhooks).
+- Why it is hard: Meet does not send one stream per person. Every real in-call snapshot in
+  `evidence/` shows exactly 3 `<audio>` elements: Meet sends the loudest speakers in 3 slots, and
+  which person is in which slot changes. Naming a slot needs either code inside Meet's page (which
+  can get the guest join blocked) or matching it to the person Meet shows as speaking.
+- Rule: nothing runs in Meet's page world before admission (`CLAUDE.md` rule 4). Try, in order:
+  1. After admission, capture each of Meet's `<audio>` elements from an ISOLATED world (not the
+     page world), and name each slot by matching its sound to the speaking indicator on the tiles
+     or in the People panel.
+  2. Only if (1) can't work: describe (don't build) what page-world code after admission would
+     need, and its risk.
+- Test it with the fake meeting page: give it 3 `<audio>` elements playing different tones and a
+  speaking indicator per person, and check each person's frames carry that person's tone.
+- Write what you learned, what works, and what to check in a real call in
+  `docs/per-person-audio.md`. Add a `./try.sh --per-person-audio <meet link>` line to `MORNING.md`.
+
+**Done when** the fake-meeting test passes with the flag on, and the mixed default still passes.
+
 ## If you finish early
 
-In this order, each behind a flag that is off by default:
-
-1. A static picture as the bot's camera (a fake video device showing the agent's name), only if it
-   can be done without bringing back the fake audio device.
-2. One audio stream per person (`docs/SPEC.md` section 7). Research only: write how it could be
-   done on Meet in `docs/per-person-audio.md`. Don't build it.
+A static picture as the bot's camera (a fake video device showing the agent's name), only if it can
+be done without bringing back the fake audio device. Behind a flag, off by default.

@@ -176,7 +176,8 @@ Open a websocket client to the URL (it carries `?token=...`). Send text frames, 
 
 - Chunks of about 200 ms (6400 bytes of PCM). Recall sends 200 ms pieces too.
 - **v1 sends the whole call's sound as ONE participant** (`meeting-mix`). The agent hears everyone
-  but can't tell who spoke. One stream per person is version 2.
+  but can't tell who spoke. One stream per person is an experimental flag (`docs/PLAN.md`, task
+  11), off by default.
 - This is the agent's ears. Without it the agent hears nothing. Start it when the bot is admitted;
   reconnect with backoff (1, 2, 4, 8 s, max 8 s) if it drops; stop it when the bot leaves.
 - The bot's own voice must not be in it (Meet does not play your own microphone back to you, so the
@@ -299,5 +300,6 @@ with its sub code, close the pages and the browsers, then report `done` and exit
 
 ## 7. Not in v1
 
-One audio stream per person · a live camera picture · signed-in joins (a Google account) ·
+One audio stream per person (an experimental flag only, `docs/PLAN.md` task 11) · a live camera
+picture · signed-in joins (a Google account) ·
 speech-to-text · webcam pictures of people · Zoom and Teams · running on a production server.
