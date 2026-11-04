@@ -87,3 +87,9 @@ def remove_bot_containers() -> None:
     names = subprocess.run(["docker", "ps", "-aq", "--filter", "label=meeting-bot.id"], capture_output=True, text=True).stdout.split()
     if names:
         subprocess.run(["docker", "rm", "-f", *names], capture_output=True)
+
+
+def request_text(path: str, key: str, base: str = API) -> str:
+    req = urllib.request.Request(base + path, headers={"Authorization": f"Token {key}"})
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        return resp.read().decode()

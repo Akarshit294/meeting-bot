@@ -12,11 +12,13 @@ import base64
 import json
 import time
 from datetime import datetime
+from pathlib import Path
 
 import numpy as np
 import pytest
 
-from dockerstack import API, TESTKIT, api_key, codes, compose, container_exists, remove_bot_containers, request, wait_http, wait_status
+from dockerstack import (API, TESTKIT, api_key, codes, compose, container_exists, remove_bot_containers, request, request_text,
+                         wait_http, wait_status)
 from xebit_logic import HeadCount, _decode_recall, _is_bot_participant, _latest_recall_status_code, decode_video
 
 pytestmark = pytest.mark.docker
@@ -73,6 +75,7 @@ def run():
         seen["meet_state"] = kit("/api/state")
         seen["camera_state"] = kit("/api/camera-state")
         seen["audio"] = kit("/api/audio?last=40")
+        seen["video_early"], seen["video_early_t"] = kit("/api/video"), time.time()
 
         # screen share on, check, replace, off
         t0 = time.time()
@@ -94,7 +97,8 @@ def run():
         seen["admitted_at"] = admitted
         while time.time() < admitted + 62:
             time.sleep(2)
-        seen["video"] = kit("/api/video?frames=2")
+        seen["video"], seen["video_t"] = kit("/api/video?frames=2"), time.time()
+        seen["run_dir"] = request_text(f"/testrx/run-dir?bot={bot_id}", key)
         seen["hooks"] = kit("/api/hooks")
         seen["camera_before_leave"] = kit("/api/camera-state")
 
@@ -248,3 +252,60 @@ def test_leave_call_end_order(run):
     assert last_camera > ended - 1.5, "the camera page was still open when call_ended was reported"
     assert last_camera < epoch(final["status_changes"][-1]["created_at"]) + 1.5, "and it closed before done"
     assert run["container_gone"]
+
+
+# ---- task 11: each person's camera picture ----
+
+COLOURS = {"spaces/fakeSpace/devices/201": ("Asha", (0xd9, 0x30, 0x25)),
+           "spaces/fakeSpace/devices/202": ("Ravi", (0x1e, 0x8e, 0x3e)),
+           "spaces/fakeSpace/devices/203": ("Meera", (0x1a, 0x73, 0xe8))}
+SELF_ID = "spaces/fakeSpace/devices/250"
+
+
+def median_colour(png: bytes) -> tuple[int, int, int]:
+    import io
+
+    from PIL import Image
+
+    img = np.asarray(Image.open(io.BytesIO(png)).convert("RGB")).reshape(-1, 3)
+    return tuple(int(v) for v in np.median(img, axis=0))
+
+
+def test_camera_pictures_per_person_never_the_bot(run):
+    counts = run["video"]["count"]
+    assert SELF_ID not in counts and "?" not in counts
+    assert set(counts) == set(COLOURS), counts
+    for pid, frames in run["video"]["frames"].items():
+        name, colour = COLOURS[pid]
+        assert frames
+        for raw in frames:
+            frame = decode_video(raw)  # xebit's reader: None would mean "dropped as the bot"
+            assert frame and frame["participant_id"] == pid and frame["participant_name"] == name
+            assert frame["type"] == "webcam"
+            png = base64.b64decode(frame["buffer"])
+            assert png[:8] == b"\x89PNG\r\n\x1a\n"
+            from PIL import Image
+            import io
+            assert Image.open(io.BytesIO(png)).width <= 320
+            got = median_colour(png)
+            assert all(abs(a - b) <= 30 for a, b in zip(got, colour)), f"{name}: {got} vs {colour}"
+        raw = json.loads(frames[-1])
+        assert raw["data"]["bot"]["id"] == run["bot_id"]
+        epoch(raw["data"]["data"]["timestamp"]["absolute"])
+
+
+def test_camera_pictures_rate(run):
+    early, late = run["video_early"]["count"], run["video"]["count"]
+    seconds = run["video_t"] - run["video_early_t"]
+    asha = "spaces/fakeSpace/devices/201"
+    rate = (late[asha] - early.get(asha, 0)) / seconds
+    assert 1.2 <= rate <= 2.6, f"Asha (camera on): {rate:.2f} pictures a second"
+    ravi = "spaces/fakeSpace/devices/202"
+    assert late[ravi] >= 3, "Ravi (camera off, picture unchanged) is still sent, every few seconds"
+
+
+def test_latest_pictures_in_the_run_folder(run):
+    from dockerstack import ROOT
+
+    folder = ROOT / "output" / "test" / Path(run["run_dir"]).name / "camera"
+    assert {p.name for p in folder.glob("*.png")} >= {"Asha.png", "Meera.png"}

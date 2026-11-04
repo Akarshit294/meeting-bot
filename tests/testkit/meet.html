@@ -60,6 +60,8 @@
   #bar #leave { width: 72px; background: #dc362e; color: #fff; }
   #side { position: absolute; right: 0; top: 0; bottom: 0; }
   #side button { position: absolute; top: 576px; width: 44px; height: 44px; border-radius: 22px; border: 0; background: #3c4043; color: #e8eaed; font-size: 9px; }
+  #call.panel #stage { right: 332px; }  /* like real Meet: the side panel makes room, it doesn't cover the tiles */
+  .tile .cam { position: absolute; left: 10px; top: 10px; width: 14px; height: 14px; border-radius: 7px; background: rgba(255,255,255,.6); }
   #panel { position: absolute; right: 16px; top: 64px; width: 300px; bottom: 88px; background: #fff; color: #202124; border-radius: 8px; padding: 12px; overflow: auto; }
   #panel [role=listitem] { padding: 8px 4px; border-bottom: 1px solid #eee; }
   #panel .host { font-size: 11px; color: #5f6368; }
@@ -132,10 +134,10 @@ const log = (e) => { state.events.push([Math.round(performance.now()), e]); };
 
 // Everyone in the call except the bot. Colours are solid, so each person's tile picture is easy to check.
 const people = [
-  { id: "spaces/fakeSpace/devices/201", name: "Asha", color: "#d93025", host: true, tone: 440 },
-  { id: "spaces/fakeSpace/devices/202", name: "Ravi", color: "#1e8e3e", tone: 660 },
+  { id: "spaces/fakeSpace/devices/201", name: "Asha", color: "#d93025", host: true, tone: 440, camera: true },
+  { id: "spaces/fakeSpace/devices/202", name: "Ravi", color: "#1e8e3e", tone: 660, camera: false },
 ];
-const LATER = { id: "spaces/fakeSpace/devices/203", name: "Meera", color: "#1a73e8", tone: 880 };
+const LATER = { id: "spaces/fakeSpace/devices/203", name: "Meera", color: "#1a73e8", tone: 880, camera: true };
 const SELF_ID = "spaces/fakeSpace/devices/250";
 
 document.addEventListener("click", (e) => { state.clicks.push([Math.round(e.clientX), Math.round(e.clientY), e.isTrusted]); }, true);
@@ -256,6 +258,7 @@ function tileFor(p, self) {
       `<button class="selfbtn" style="right:8px" aria-label="More options for ${p.name}">more_vert</button>` +
       `<div class="sr">Others might still see your full video.</div>`;
   }
+  if (p.camera) t.insertAdjacentHTML("beforeend", `<div class="cam" aria-hidden="true"></div>`);
   t.insertAdjacentHTML("beforeend", `<div class="initial" aria-hidden="true" data-initial="${initial}"></div><div class="nm">${p.name}</div>` +
     `<div class="sr">${p.name}</div><div class="icon">devices</div>`);
   return t;
@@ -299,7 +302,10 @@ function cycleSpeakers() {
   };
   step();
 }
-$("people").onclick = () => { state.people_clicks++; state.panel_open = !state.panel_open; $("panel").classList.toggle("hidden", !state.panel_open); };
+$("people").onclick = () => {
+  state.people_clicks++; state.panel_open = !state.panel_open;
+  $("panel").classList.toggle("hidden", !state.panel_open); $("call").classList.toggle("panel", state.panel_open);
+};
 
 // ---- screen share ----
 let shareStream = null;
@@ -364,6 +370,11 @@ async function commands() {
     }
   } catch (e) {}
 }
+// A "camera": the dot in a camera-on tile moves, so that person's picture keeps changing.
+setInterval(() => {
+  const x = 10 + Math.round(60 * (0.5 + 0.5 * Math.sin(performance.now() / 300)));
+  for (const dot of document.querySelectorAll(".tile .cam")) dot.style.left = x + "px";
+}, 100);
 setInterval(() => {
   measure(); sampleShare(); commands();
   state.title = document.title;
