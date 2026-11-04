@@ -86,6 +86,9 @@ class Socket:
                     ws = self._connect(self.url, timeout=10)
                     with self._lock:
                         self._ws = ws
+                    # Read (and drop) what the server sends: this answers its pings. Servers like
+                    # uvicorn close a socket whose pings go unanswered (after about 40 s).
+                    threading.Thread(target=self._drain, args=(ws,), name=f"{self.name}-ws-read", daemon=True).start()
                     self.connects += 1
                     failures = 0
                     self.log(f"{self.name}: connected to {safe_url(self.url)}"
@@ -100,6 +103,14 @@ class Socket:
                     continue
             self._wake.wait(1)
             self._wake.clear()
+
+    def _drain(self, ws) -> None:
+        ws.settimeout(None)
+        while not self._stop.is_set() and self._ws is ws:
+            try:
+                ws.recv()
+            except Exception:  # noqa: BLE001 - closed: the sender notices and reconnects
+                return
 
     def send(self, text: str) -> bool:
         with self._lock:

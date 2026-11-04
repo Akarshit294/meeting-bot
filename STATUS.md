@@ -11,7 +11,7 @@ Where the overnight build (2026-11-04) stands. Newest first inside each section.
 | 3 Bot takes orders | done | config from the manager, status reports, control server on 8080, run folder with `bot.log`, `--join-only`; `tests/test_bot_orders.py` |
 | 4 Manager runs real containers | done | Docker SDK runner, compose; `tests/test_docker_manager.py` (create, `joining_call`, leave, `call_ended`, `done`, container gone; a killed container gets `fatal`) |
 | 5 Fake meeting page | done | `tests/testkit/` (fake Meet from the evidence snapshots, receiver, test camera and screen pages); `tests/test_docker_meeting.py`: the bot joins through the real join code; joins for Asha and Ravi, none for the bot |
-| 6 Sound, both ways | not started | |
+| 6 Sound, both ways | done | PulseAudio in the bot; docker test: the fake meeting hears ~1000 Hz from the camera page, the camera page hears 440 Hz, xebit's `_decode_recall` reads 200 ms 16 kHz frames peaking at 440 Hz with no 1000 Hz; `tests/test_audio.py` (format, pings, reconnect, backoff) |
 | 7 Screen share | not started | |
 | 8 Participants and leaving | not started | |
 | 9 Morning kit | not started | |
@@ -53,6 +53,9 @@ The VM's `.env` also sets `TEST_MEET_URL` so no bot here can ever open real Meet
 - **All browser-B windows are kept UNDER Meet's window** (re-lowered every 2 s and before every click).
   The bot's clicks go to whatever window is on top; Chrome still captures a covered window (X Composite).
   The screen stays 1280x720 like the proven runs.
+- **The bot's websocket clients read what the server sends**, only to answer its pings. Found in the fake
+  meeting test: uvicorn (which xebit-api also runs) closes a socket whose pings go unanswered, so without
+  this the audio socket dropped every 40 s.
 - **`--join-only` does not start PulseAudio**, so Meet sees the same devices as in the proven runs.
 - **After `fatal` the bot writes nothing more, not even `done`** (in `events.jsonl` too), to match the API.
 - **`in_call_recording` is reported once the start steps are done** (people read, audio started, camera
