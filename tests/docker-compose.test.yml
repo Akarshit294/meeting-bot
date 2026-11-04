@@ -8,3 +8,18 @@ services:
       STATE_FILE: /state/test-bots.json
       HOST_OUTPUT_DIR: ${PWD}/output/test
       OUTPUT_DIR: /output/test
+
+  testkit:
+    build:
+      network: ${BUILD_NETWORK:-default}
+      args:
+        NET: ${BUILD_NET:-direct}
+        https_proxy: ${BUILD_HTTPS_PROXY:-}
+      additional_contexts:
+        proxyca: ${BUILD_PROXY_CA_DIR:-./docker/no-proxy}
+      context: .
+      dockerfile: tests/testkit/Dockerfile
+    image: meeting-bot-testkit:latest
+    ports:
+      - "9000:9000"
+    networks: [meeting-bot]

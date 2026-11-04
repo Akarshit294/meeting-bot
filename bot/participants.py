@@ -225,7 +225,10 @@ class MeetReader:
         entries = []
         for i in range(min(tiles.count(), 60)):
             try:
-                entries.append(self._entry(tiles.nth(i), "tile"))
+                tile = tiles.nth(i)
+                if not tile.is_visible():  # e.g. the entries of a closed People panel
+                    continue
+                entries.append(self._entry(tile, "tile"))
             except Exception:  # noqa: BLE001 - a tile can vanish while we read it
                 continue
         ids = {e.id for e in entries if e.id}
@@ -256,6 +259,7 @@ class People:
         self.last_read = 0.0
         self.logged: set[str] = set()
         self.source = None
+        self.started = clock()
         self.urls = {kind: [e.url for e in cfg.webhooks_for(f"participant_events.{kind}")] for kind in ("join", "leave")}
         if not (self.urls["join"] or self.urls["leave"]):
             rep.log("no participant_events webhook: joins and leaves are only logged")
@@ -309,13 +313,9 @@ class People:
                 self.webhooks.send(url, webhook_body(kind, self.cfg.bot_id, person))
         if events:
             self.rep.snapshot(self.page, f"people-{int(time.time())}")
-        if initial:
+        # The panel is opened a little later, so the sound and the camera page start first.
+        if not initial and read.source == "tiles" and self.panel_tries < 2 and now - self.started > 3:
             self._try_open_panel()
-        elif read.source == "tiles" and self.panel_tries < 2 and now - self.roster_started() > 5:
-            self._try_open_panel()
-
-    def roster_started(self) -> float:
-        return getattr(self, "_started", self.__dict__.setdefault("_started", self.clock()))
 
     def count_others(self) -> int:
         return self.roster.count()

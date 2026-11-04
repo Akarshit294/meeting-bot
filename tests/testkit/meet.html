@@ -1,0 +1,362 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Meet</title>
+<!--
+  FAKE Google Meet for tests (docs/PLAN.md task 5). No Google code. Labels, texts and tile attributes are
+  copied from the real page snapshots in evidence/ (see evidence/README.md section 4):
+  - pre-join (guest): input "Your name", "Turn off microphone" / "Turn off camera", "Ask to join",
+    "Other ways to join"; positions from bot/mouse/meet-layout.json (viewport 1279x632);
+  - waiting: "Asking to be let in…", "Please wait until a meeting host brings you into the call", a "Leave call" button;
+  - in call: the bottom bar's aria-labels, a "People N" button, tiles with data-participant-id /
+    data-requested-participant-id / data-tile-media-id, the bot's own tile with "Backgrounds and effects",
+    "Show in a tile", "More options for <name>" and "Others might still see your full video.";
+  - left: "You left the meeting", "Rejoin", "Return to home screen"; removed: "You've been removed from the meeting".
+  Query options: admit=<s> (default 2), join_at=<s> (20), leave_at=<s> (40), deny=1, audio=mix|perperson.
+-->
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px "Google Sans", Roboto, Arial, sans-serif; background: #fff; color: #202124; overflow: hidden; }
+  body.dark { background: #202124; color: #e8eaed; }
+  button { font: inherit; cursor: pointer; }
+  .abs { position: absolute; }
+  .hidden { display: none !important; }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  /* pre-join */
+  #prejoin .logo { left: 16px; top: 18px; font-size: 22px; color: #5f6368; }
+  #preview { left: 32.5px; top: 91.9px; width: 742px; height: 418px; background: #1b5e20; border-radius: 8px; }
+  #mic { left: 331.5px; top: 445.1px; width: 56px; height: 48px; border-radius: 24px; border: 0; background: #e8eaed; }
+  #cam { left: 403.5px; top: 445.1px; width: 56px; height: 48px; border-radius: 24px; border: 0; background: #e8eaed; }
+  #mic.off, #cam.off { background: #ea4335; color: #fff; }
+  #heading { left: 879.5px; top: 180px; font-size: 28px; }
+  #name { left: 879.5px; top: 239.5px; width: 268px; height: 24px; border: 1px solid #5f6368; padding: 0 6px; }
+  #join { left: 893.5px; top: 336.5px; width: 240px; height: 56px; border-radius: 28px; border: 0; background: #0b57d0; color: #fff; }
+  #other { left: 920.4px; top: 420.5px; width: 186.1px; height: 40px; border-radius: 20px; border: 1px solid #747775; background: #fff; color: #0b57d0; }
+  /* call */
+  #call { position: absolute; inset: 0; }
+  #topbar { position: absolute; left: 24px; top: 18px; font-size: 16px; }
+  #people { position: absolute; left: 1160px; top: 14px; width: 58px; height: 34px; border-radius: 17px; border: 0; background: #3c4043; color: #e8eaed; }
+  #stage { position: absolute; left: 16px; top: 64px; right: 16px; bottom: 88px; display: flex; gap: 12px; }
+  #tiles { flex: 1; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; align-content: stretch; }
+  #stage.sharing #tiles { flex: 0 0 240px; grid-template-columns: 1fr; grid-auto-rows: 120px; }
+  .tile { position: relative; border-radius: 8px; overflow: hidden; min-height: 100px; }
+  .tile .initial { position: absolute; left: 50%; top: 45%; transform: translate(-50%, -50%); width: 64px; height: 64px; border-radius: 50%;
+                   background: rgba(0,0,0,.25); color: #fff; font-size: 32px; display: flex; align-items: center; justify-content: center; }
+  .tile .initial::before { content: attr(data-initial); }
+  .tile .nm { position: absolute; left: 12px; bottom: 10px; color: #fff; font-size: 14px; }
+  .tile .icon { position: absolute; right: 10px; top: 8px; color: #fff; font-size: 11px; opacity: .7; }
+  .tile.speaking { outline: 4px solid #8ab4f8; outline-offset: -4px; }
+  .tile .selfbtn { position: absolute; top: 8px; font-size: 10px; background: #3c4043; color: #e8eaed; border: 0; border-radius: 12px; padding: 4px 6px; }
+  #presentation { flex: 1; background: #000; border-radius: 8px; display: none; position: relative; }
+  #stage.sharing #presentation { display: block; }
+  #presentation video { width: 100%; height: 100%; object-fit: contain; }
+  #banner { position: absolute; left: 50%; top: 14px; transform: translateX(-50%); background: #8ab4f8; color: #202124; border-radius: 6px; padding: 6px 12px; }
+  #bar { position: absolute; left: 332px; top: 552px; width: 617px; height: 72px; border-radius: 36px; background: #2d2e31; display: flex;
+         align-items: center; justify-content: center; gap: 8px; }
+  #bar button { height: 48px; min-width: 40px; border-radius: 24px; border: 0; background: #3c4043; color: #e8eaed; font-size: 10px; }
+  #bar button.off { background: #f9dedc; color: #8c1d18; }
+  #bar #leave { width: 72px; background: #dc362e; color: #fff; }
+  #side { position: absolute; right: 0; top: 0; bottom: 0; }
+  #side button { position: absolute; top: 576px; width: 44px; height: 44px; border-radius: 22px; border: 0; background: #3c4043; color: #e8eaed; font-size: 9px; }
+  #panel { position: absolute; right: 16px; top: 64px; width: 300px; bottom: 88px; background: #fff; color: #202124; border-radius: 8px; padding: 12px; overflow: auto; }
+  #panel [role=listitem] { padding: 8px 4px; border-bottom: 1px solid #eee; }
+  #panel .host { font-size: 11px; color: #5f6368; }
+  #status { position: absolute; left: 0; right: 0; top: 40%; text-align: center; font-size: 24px; }
+  #debug { position: absolute; left: 4px; bottom: 2px; font: 10px monospace; color: #9aa0a6; }
+</style>
+</head>
+<body>
+<div id="prejoin">
+  <div class="abs logo">Google Meet</div>
+  <video id="preview" class="abs" muted autoplay playsinline></video>
+  <button id="mic" class="abs" aria-label="Turn off microphone" data-is-muted="false"><span aria-hidden="true">mic</span></button>
+  <button id="cam" class="abs" aria-label="Turn off camera" data-is-muted="false"><span aria-hidden="true">videocam</span></button>
+  <h1 id="heading" class="abs">What's your name?</h1>
+  <input id="name" class="abs" type="text" aria-label="Your name" placeholder="Your name" maxlength="60" autocomplete="off">
+  <button id="join" class="abs"><span>Ask to join</span></button>
+  <button id="other" class="abs">Other ways to join <span aria-hidden="true">expand_more</span></button>
+</div>
+
+<div id="call" class="hidden">
+  <div id="topbar"><span id="clock">9:47 AM</span> | abc-defg-hij</div>
+  <button id="people" data-tooltip-id="ucc-52"><span class="sr">People</span> <span id="count">1</span></button>
+  <div id="banner" class="hidden" role="status">You are presenting to everyone <button id="stopshare">Stop presenting</button></div>
+  <div id="stage">
+    <div id="presentation"><video id="sharevideo" muted autoplay playsinline></video></div>
+    <div id="tiles"></div>
+  </div>
+  <div id="panel" class="hidden" aria-label="Side panel">
+    <h2>People</h2>
+    <div class="host">In the meeting</div>
+    <div id="plist" role="list" aria-label="Participants"></div>
+  </div>
+  <div id="bar" aria-label="Call controls">
+    <button aria-label="Audio settings">keyboard_arrow_up</button>
+    <button id="cmic" aria-label="Turn on microphone" class="off" data-is-muted="true">mic_off</button>
+    <button aria-label="Video settings">keyboard_arrow_up</button>
+    <button id="ccam" aria-label="Turn on camera" class="off" data-is-muted="true">videocam_off</button>
+    <button id="share" aria-label="Share screen">computer_arrow_up</button>
+    <button aria-label="Send a reaction">mood</button>
+    <button aria-label="Turn on captions">closed_caption_off</button>
+    <button aria-label="Raise hand (ctrl + alt + h)">back_hand</button>
+    <button aria-label="More options">more_vert</button>
+    <button id="leave" aria-label="Leave call">call_end</button>
+  </div>
+  <div id="side">
+    <button style="right:76px" aria-label="Chat with everyone">chat</button>
+    <button style="right:24px" aria-label="Meeting tools">apps</button>
+  </div>
+  <div id="waiting" class="hidden" style="position:absolute;inset:0;background:#202124;">
+    <div id="status" role="status">Asking to be let in…<br><span style="font-size:14px">Please wait until a meeting host brings you into the call</span></div>
+    <button aria-label="Leave call" style="position:absolute;left:600px;top:560px;width:72px;height:48px;border-radius:24px;border:0;background:#dc362e;color:#fff">call_end</button>
+  </div>
+</div>
+
+<div id="ended" class="hidden" style="position:absolute;inset:0;background:#fff;color:#202124;text-align:center;padding-top:160px">
+  <h1 id="endtext">You left the meeting</h1>
+  <button>Rejoin</button> <button>Return to home screen</button>
+</div>
+
+<div id="debug"></div>
+
+<script>
+const Q = new URLSearchParams(location.search);
+const ADMIT_S = +(Q.get("admit") || 2), JOIN_AT = +(Q.get("join_at") || 20), LEAVE_AT = +(Q.get("leave_at") || 40);
+const AUDIO_MODE = Q.get("audio") || "mix";
+const $ = (id) => document.getElementById(id);
+const state = { phase: "prejoin", name: "", mic_on: true, cam_on: true, mic: {}, share: { active: false, frames: 0 },
+                admitted_at: null, people_clicks: 0, panel_open: false, events: [], clicks: [] };
+const log = (e) => { state.events.push([Math.round(performance.now()), e]); };
+
+// Everyone in the call except the bot. Colours are solid, so each person's tile picture is easy to check.
+const people = [
+  { id: "spaces/fakeSpace/devices/201", name: "Asha", color: "#d93025", host: true, tone: 440 },
+  { id: "spaces/fakeSpace/devices/202", name: "Ravi", color: "#1e8e3e", tone: 660 },
+];
+const LATER = { id: "spaces/fakeSpace/devices/203", name: "Meera", color: "#1a73e8", tone: 880 };
+const SELF_ID = "spaces/fakeSpace/devices/250";
+
+document.addEventListener("click", (e) => { state.clicks.push([Math.round(e.clientX), Math.round(e.clientY), e.isTrusted]); }, true);
+
+// ---- microphone: measure what Meet would send (level and strongest frequency) ----
+let ctx = null, analyser = null;
+async function startMic() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+    state.mic.label = stream.getAudioTracks()[0].label;
+    ctx = ctx || new AudioContext();
+    const src = ctx.createMediaStreamSource(stream);
+    analyser = ctx.createAnalyser(); analyser.fftSize = 8192;
+    src.connect(analyser);
+  } catch (e) { state.mic.error = String(e); }
+  try { const v = await navigator.mediaDevices.getUserMedia({ video: true }); $("preview").srcObject = v; state.cam = "ok"; }
+  catch (e) { state.cam = "Camera not found"; }
+}
+function measure() {
+  if (!analyser) return;
+  const f = new Float32Array(analyser.frequencyBinCount); analyser.getFloatFrequencyData(f);
+  let best = 1; for (let i = 2; i < f.length; i++) if (f[i] > f[best]) best = i;
+  const t = new Float32Array(analyser.fftSize); analyser.getFloatTimeDomainData(t);
+  let s = 0; for (const x of t) s += x * x;
+  state.mic.freq = Math.round(best * ctx.sampleRate / analyser.fftSize);
+  state.mic.level_db = Math.round(10 * Math.log10(s / t.length + 1e-12));
+  state.mic.ctx = ctx.state;
+}
+startMic();
+
+// ---- the meeting's sound ----
+const sounds = {};
+function startSound() {
+  ctx = ctx || new AudioContext();
+  ctx.resume();
+  if (AUDIO_MODE === "perperson") return startPerPerson();
+  const o = ctx.createOscillator(); o.frequency.value = 440;
+  const g = ctx.createGain(); g.gain.value = 0.25;
+  o.connect(g); g.connect(ctx.destination); o.start();
+  sounds.mix = o;
+}
+// Like real Meet: 3 <audio> elements ("slots"); whoever speaks is put in a slot, and the slot changes.
+const slots = [];
+function startPerPerson() {
+  for (let i = 0; i < 3; i++) { const a = document.createElement("audio"); a.autoplay = true; document.body.appendChild(a); slots.push({ el: a, who: null }); }
+}
+function speak(person, on) {
+  const tile = document.querySelector(`.tile[data-participant-id="${person.id}"]`);
+  if (tile) tile.classList.toggle("speaking", on);
+  const item = document.querySelector(`#plist [data-participant-id="${person.id}"]`);
+  if (item) item.dataset.speaking = on ? "true" : "false";
+  if (AUDIO_MODE !== "perperson") return;
+  if (on) {
+    const slot = slots.find((s) => !s.who) || slots[0];
+    const o = ctx.createOscillator(); o.frequency.value = person.tone;
+    const g = ctx.createGain(); g.gain.value = 0.3; const d = ctx.createMediaStreamDestination();
+    o.connect(g); g.connect(d); o.start();
+    slot.el.srcObject = d.stream; slot.who = person.id; slot.osc = o; slot.el.play().catch(() => {});
+  } else {
+    const slot = slots.find((s) => s.who === person.id);
+    if (slot) { slot.osc.stop(); slot.el.srcObject = null; slot.who = null; }
+  }
+  state.speaking = people.filter((p) => document.querySelector(`.tile.speaking[data-participant-id="${p.id}"]`)).map((p) => p.id);
+}
+
+// ---- pre-join ----
+function toggle(btn, device) {
+  const off = btn.getAttribute("aria-label").startsWith("Turn off");
+  btn.setAttribute("aria-label", (off ? "Turn on " : "Turn off ") + device);
+  btn.classList.toggle("off", off); btn.dataset.isMuted = String(off);
+  return !off;
+}
+$("mic").onclick = () => { state.mic_on = toggle($("mic"), "microphone"); log("prejoin mic " + state.mic_on); };
+$("cam").onclick = () => { state.cam_on = toggle($("cam"), "camera"); log("prejoin cam " + state.cam_on); };
+$("join").onclick = (e) => {
+  state.name = $("name").value; state.join_trusted = e.isTrusted;
+  log("ask to join as " + state.name);
+  ctx = ctx || new AudioContext(); ctx.resume();
+  $("prejoin").classList.add("hidden"); document.body.classList.add("dark");
+  $("call").classList.remove("hidden"); $("waiting").classList.remove("hidden");
+  state.phase = "waiting";
+  syncBar();
+  setTimeout(Q.get("deny") ? deny : admit, ADMIT_S * 1000);
+};
+function deny() { end("Someone in the call denied your request to join"); }
+
+// ---- in the call ----
+function syncBar() {
+  for (const [id, device, on] of [["cmic", "microphone", state.mic_on], ["ccam", "camera", state.cam_on]]) {
+    const b = $(id); b.setAttribute("aria-label", (on ? "Turn off " : "Turn on ") + device);
+    b.classList.toggle("off", !on); b.dataset.isMuted = String(!on);
+  }
+}
+$("cmic").onclick = () => { state.mic_on = !state.mic_on; syncBar(); log("mic " + state.mic_on); };
+$("ccam").onclick = () => { state.cam_on = !state.cam_on; syncBar(); log("cam " + state.cam_on); };
+
+function tileFor(p, self) {
+  const t = document.createElement("div");
+  t.className = "tile"; t.style.background = p.color;
+  for (const a of ["data-participant-id", "data-requested-participant-id", "data-tile-media-id"]) t.setAttribute(a, p.id);
+  t.setAttribute("jsname", "E2KThb"); t.tabIndex = -1;
+  const initial = (p.name || "?")[0].toUpperCase();
+  if (self) {
+    t.innerHTML = `<button class="selfbtn" style="left:8px" aria-label="Backgrounds and effects">visual_effects</button>` +
+      `<button class="selfbtn" style="left:44px" aria-label="Show in a tile"></button>` +
+      `<button class="selfbtn" style="right:8px" aria-label="More options for ${p.name}">more_vert</button>` +
+      `<div class="sr">Others might still see your full video.</div>`;
+  }
+  t.insertAdjacentHTML("beforeend", `<div class="initial" aria-hidden="true" data-initial="${initial}"></div><div class="nm">${p.name}</div>` +
+    `<div class="sr">${p.name}</div><div class="icon">devices</div>`);
+  return t;
+}
+function render() {
+  const tiles = $("tiles"); tiles.innerHTML = "";
+  for (const p of people) tiles.appendChild(tileFor(p, false));
+  tiles.appendChild(tileFor({ id: SELF_ID, name: state.name || "You", color: "#3c4043" }, true));
+  $("count").textContent = String(people.length + 1);
+  const list = $("plist"); list.innerHTML = "";
+  for (const p of [{ id: SELF_ID, name: state.name, self: true }, ...people]) {
+    const it = document.createElement("div");
+    it.setAttribute("role", "listitem"); it.setAttribute("aria-label", p.name);
+    it.setAttribute("data-participant-id", p.id);
+    it.innerHTML = `<span>${p.name}${p.self ? " (You)" : ""}</span>` + (p.host ? `<div class="host">Meeting host</div>` : "");
+    list.appendChild(it);
+  }
+  state.participants = people.map((p) => p.id);
+}
+function admit() {
+  if (state.phase !== "waiting") return;
+  state.phase = "in_call"; state.admitted_at = Date.now(); log("admitted");
+  $("waiting").classList.add("hidden");
+  render(); startSound();
+  setTimeout(() => { if (state.phase === "in_call") { people.push(LATER); render(); log("Meera joined"); } }, JOIN_AT * 1000);
+  setTimeout(() => {
+    if (state.phase !== "in_call") return;
+    const i = people.findIndex((p) => p.name === "Ravi"); if (i >= 0) people.splice(i, 1); render(); log("Ravi left");
+  }, LEAVE_AT * 1000);
+  if (AUDIO_MODE === "perperson") cycleSpeakers();
+}
+// Speakers take turns, 3 s each, so the speaking indicator and the <audio> slots change over time.
+function cycleSpeakers() {
+  let n = 0;
+  const step = () => {
+    if (state.phase !== "in_call") return;
+    for (const p of people) speak(p, false);
+    const who = people[n % people.length]; n++;
+    if (who) speak(who, true);
+    setTimeout(step, 3000);
+  };
+  step();
+}
+$("people").onclick = () => { state.people_clicks++; state.panel_open = !state.panel_open; $("panel").classList.toggle("hidden", !state.panel_open); };
+
+// ---- screen share ----
+let shareStream = null;
+$("share").onclick = async () => {
+  log("share clicked");
+  try {
+    shareStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+  } catch (e) { state.share.error = String(e); log("share failed " + e); return; }
+  const track = shareStream.getVideoTracks()[0];
+  state.share = { active: true, frames: 0, label: track.label, surface: track.getSettings().displaySurface, started: Date.now(), samples: [] };
+  $("sharevideo").srcObject = shareStream;
+  $("stage").classList.add("sharing"); $("banner").classList.remove("hidden");
+  track.onended = () => stopShare("track ended");
+  const v = $("sharevideo");
+  const count = () => { if (!state.share.active) return; state.share.frames++; v.requestVideoFrameCallback(count); };
+  v.requestVideoFrameCallback(count);
+};
+function stopShare(why) {
+  if (shareStream) shareStream.getTracks().forEach((t) => t.stop());
+  shareStream = null; state.share.active = false; state.share.stopped = why;
+  $("stage").classList.remove("sharing"); $("banner").classList.add("hidden");
+  log("share stopped: " + why);
+}
+$("stopshare").onclick = () => stopShare("Stop presenting clicked");
+function sampleShare() {
+  const v = $("sharevideo");
+  if (!state.share.active || !v.videoWidth) return;
+  const c = document.createElement("canvas"); c.width = 160; c.height = 90;
+  const x = c.getContext("2d"); x.drawImage(v, 0, 0, 160, 90);
+  const d = x.getImageData(0, 0, 160, 90).data;
+  let sum = 0, lit = 0;
+  for (let i = 0; i < d.length; i += 4) { const b = (d[i] + d[i + 1] + d[i + 2]) / 3; sum += b; if (b > 30) lit++; }
+  state.share.width = v.videoWidth; state.share.height = v.videoHeight;
+  state.share.mean = Math.round(sum / (d.length / 4)); state.share.lit = +(lit / (d.length / 4)).toFixed(3);
+  state.share.samples.push([state.share.mean, state.share.lit]); state.share.samples = state.share.samples.slice(-20);
+}
+
+// ---- the end ----
+function end(text) {
+  state.phase = "ended"; state.end = text; log("ended: " + text);
+  if (shareStream) stopShare("call ended");
+  for (const k in sounds) try { sounds[k].stop(); } catch (e) {}
+  for (const s of slots) if (s.osc) try { s.osc.stop(); } catch (e) {}
+  $("call").classList.add("hidden"); $("ended").classList.remove("hidden"); $("endtext").textContent = text;
+  document.body.classList.remove("dark");
+}
+$("leave").onclick = () => end("You left the meeting");
+for (const b of document.querySelectorAll('#waiting [aria-label="Leave call"]')) b.onclick = () => end("You left the meeting");
+
+// ---- talk to the test kit ----
+async function commands() {
+  try {
+    const r = await fetch("/api/commands"); const list = await r.json();
+    for (const c of list) {
+      log("command " + c.do);
+      if (c.do === "remove_bot") end("You've been removed from the meeting");
+      if (c.do === "end_call") end("The call ended because everyone left");
+      if (c.do === "add") { people.push(c.person); render(); }
+      if (c.do === "remove") { const i = people.findIndex((p) => p.id === c.id); if (i >= 0) people.splice(i, 1); render(); }
+      if (c.do === "admit") admit();
+    }
+  } catch (e) {}
+}
+setInterval(() => {
+  measure(); sampleShare(); commands();
+  state.title = document.title;
+  $("debug").textContent = `mic ${state.mic_on ? "on" : "off"} ${state.mic.freq || "-"} Hz ${state.mic.level_db ?? "-"} dB | share ${state.share.active ? state.share.mean : "-"}`;
+  fetch("/api/state", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(state) }).catch(() => {});
+}, 500);
+</script>
+</body>
+</html>
