@@ -155,11 +155,36 @@ leave ~10 s after the removal at 40 s, never one for the bot; `leave_call` gives
   `STATUS.md`.
 - Re-read `docs/SPEC.md` and tick every point in `STATUS.md` as done / not done / done differently.
 
-## Task 11 — One audio stream per person (experimental, only after tasks 1–10)
+## Task 11 — Each person's camera picture (only after tasks 1–10)
 
-The owner wants this. It is the hardest part, so it comes after the core works, and it stays behind
-a flag (`--per-person-audio`, off by default). The mixed stream from task 6 stays the default, so
-the morning test has a working baseline either way.
+`docs/SPEC.md` 3.3: about 2 pictures per second per person, cut from one screenshot of Meet's
+window per tick, sent on the `video_separate_png.data` websocket. On by default, with a flag to turn
+it off (`--no-camera-pictures`). It runs on its own: any failure in it is logged and must never
+touch the call, the audio or the screen share.
+
+- Never the bot's own tile. During the bot's own screen share, Meet moves the tiles to a side strip:
+  keep sending from wherever the tiles are.
+- Measure what it costs (`docs/SPEC.md` 4.4 budget) and write the numbers in `STATUS.md`.
+- Also keep each person's latest picture in the run folder (`camera/<name>.png`), and print in
+  `./try.sh` how many pictures were sent per person, so the owner can check this without xebit.
+  Add these checks, and the speaker timeline of task 12, to `MORNING.md`.
+- Test with the fake meeting page: give its tiles different solid colours, and check each person's
+  pictures arrive with that person's id and colour, and none for the bot.
+
+**Done when** that test passes and every earlier test still passes. Then merge into `main` again.
+
+## Task 12 — Diarized audio: who spoke, and one stream per person (experimental, after task 11)
+
+The owner wants this. It is the hardest part, so it comes last. Do it in two steps.
+
+**Step 1 — who spoke when (cheap, always on).** Meet shows who is talking (a speaking indicator on
+the tiles and in the People panel). Read it about 5 times a second, through locators only, and
+write a speaker timeline to the run folder (`speakers.jsonl`: time, person id, name, started /
+stopped). This works even if step 2 fails. Log what the real indicator looks like so the morning
+test can check it.
+
+**Step 2 — one stream per person.** Behind a flag (`--per-person-audio`, off by default). The
+mixed stream from task 6 stays the default, so the morning test has a working baseline either way.
 
 - Goal: instead of one `meeting-mix` stream, send one stream per person, in the same frame format
   (`docs/SPEC.md` 3.2), with that person's participant `id` and `name` (the same ids as the
@@ -179,7 +204,8 @@ the morning test has a working baseline either way.
 - Write what you learned, what works, and what to check in a real call in
   `docs/per-person-audio.md`. Add a `./try.sh --per-person-audio <meet link>` line to `MORNING.md`.
 
-**Done when** the fake-meeting test passes with the flag on, and the mixed default still passes.
+**Done when** the speaker timeline is written in the fake-meeting test, the per-person test passes
+with the flag on, and the mixed default still passes. Then merge into `main` again.
 
 ## If you finish early
 

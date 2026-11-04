@@ -176,18 +176,46 @@ Open a websocket client to the URL (it carries `?token=...`). Send text frames, 
 
 - Chunks of about 200 ms (6400 bytes of PCM). Recall sends 200 ms pieces too.
 - **v1 sends the whole call's sound as ONE participant** (`meeting-mix`). The agent hears everyone
-  but can't tell who spoke. One stream per person is an experimental flag (`docs/PLAN.md`, task
-  11), off by default.
+  but can't tell who spoke. One stream per person (diarized) is an experimental flag
+  (`docs/PLAN.md`, task 12), off by default.
 - This is the agent's ears. Without it the agent hears nothing. Start it when the bot is admitted;
   reconnect with backoff (1, 2, 4, 8 s, max 8 s) if it drops; stop it when the bot leaves.
 - The bot's own voice must not be in it (Meet does not play your own microphone back to you, so the
   Meet browser's speaker output is right).
 - Decoder that reads it: `_decode_recall` in `docs/xebit-consumer/audio_ingest_excerpt.py`.
 
-### 3.3 Not in v1
+### 3.3 Each person's camera picture — websocket, event `video_separate_png.data`
+
+Built in `docs/PLAN.md` task 11, after the core works. Open a websocket client to the URL and send
+text frames, about 2 per second per person:
+
+```json
+{
+  "event": "video_separate_png.data",
+  "data": {
+    "data": {
+      "buffer": "<base64 PNG of that person's tile>",
+      "type": "webcam",
+      "participant": {"id": "<same id as the join webhook>", "name": "Asha", "is_bot": false},
+      "timestamp": {"absolute": "<ISO time, UTC>"}
+    },
+    "bot": {"id": "xbot_3f2c..."}
+  }
+}
+```
+
+- What xebit does with it: small corner pictures of each person in the meeting recording
+  (`docs/xebit-consumer/video_ingest_excerpt.py`). It drops frames marked as the bot.
+- Never send the bot's own tile. `type` is `"webcam"` for a person's tile, `"screenshare"` for a
+  person's shared screen (if one shows).
+- How, without running code in Meet's page: one screenshot of Meet's window per tick, then cut out
+  each person's tile by its position (Playwright locators give the boxes). A person with the camera
+  off still has a tile (their initial or picture); send that.
+- Small: scale each picture to at most 320 px wide. Skip a person whose picture hasn't changed.
+
+### 3.4 Not in v1
 
 - `transcript.data` / `transcript.partial_data` webhooks: no speech-to-text in v1. Send nothing.
-- `video_separate_png.data` websocket: don't connect.
 - Recall's status webhook: none. xebit-api polls `GET /bot/{id}/`.
 
 ## 4. Inside the bot: the two pages
@@ -300,6 +328,6 @@ with its sub code, close the pages and the browsers, then report `done` and exit
 
 ## 7. Not in v1
 
-One audio stream per person (an experimental flag only, `docs/PLAN.md` task 11) · a live camera
-picture · signed-in joins (a Google account) ·
+One audio stream per person (an experimental flag only, `docs/PLAN.md` task 12) · the bot's own
+live camera picture · signed-in joins (a Google account) ·
 speech-to-text · webcam pictures of people · Zoom and Teams · running on a production server.
