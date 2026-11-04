@@ -97,6 +97,7 @@ def parse_endpoints(recording_config: Any) -> list[dict]:
 
 def create_app(settings: Settings, runner: Runner, store: Store | None = None, watch: bool = True) -> FastAPI:
     store = store or Store(settings.state_file)
+    runner.token_for = lambda bot_id: bot_token(store.secret, bot_id)
     stop_watch = threading.Event()
 
     def watch_once() -> None:

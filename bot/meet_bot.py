@@ -20,6 +20,9 @@ from playwright.sync_api import Locator, Page, Playwright, sync_playwright
 
 import human_mouse
 import live_session
+from botconfig import BotConfig, ManagerLink, needs_secure_flag, origin, safe_url
+from control import ControlServer
+from reporting import Reporter
 
 Outcome = tuple[str, str | None, str]
 
@@ -62,38 +65,13 @@ QUIET_AFTER_KNOCK = 8
 STOPPED: Outcome = ("call_ended", "bot_received_leave_call", "stop requested (SIGINT/SIGTERM)")
 stop_requested = False
 mouse: human_mouse.HumanMouse
+# Called before every click in Meet (service mode: keeps our own page windows under Meet's window).
+before_click = None
 
 
 def request_stop(_signum, _frame) -> None:
     global stop_requested
     stop_requested = True
-
-
-class Reporter:
-    def __init__(self, run_dir: Path):
-        run_dir.mkdir(parents=True, exist_ok=True)
-        self.run_dir = run_dir
-        self.count = 0
-
-    def log(self, message: str) -> None:
-        print(f"[{datetime.now(timezone.utc):%H:%M:%S}] {message}", flush=True)
-
-    def status(self, code: str, sub_code: str | None = None, message: str = "", page: Page | None = None) -> None:
-        self.count += 1
-        event = {"ts": datetime.now(timezone.utc).isoformat(timespec="seconds"), "code": code, "sub_code": sub_code, "message": message}
-        with open(self.run_dir / "events.jsonl", "a") as f:
-            f.write(json.dumps(event) + "\n")
-        self.log(f"STATUS {code}" + (f" [{sub_code}]" if sub_code else "") + (f" - {message}" if message else ""))
-        if page is not None:
-            self.snapshot(page, f"{self.count:02d}-{code}", html=code in ("fatal", "call_ended"))
-
-    def snapshot(self, page: Page, name: str, html: bool = False) -> None:
-        try:
-            page.screenshot(path=self.run_dir / f"{name}.png")
-            if html:
-                (self.run_dir / f"{name}.html").write_text(page.content())
-        except PlaywrightError:
-            pass
 
 
 def probe(page: Page) -> dict:
@@ -115,6 +93,8 @@ def excerpt(text: str, limit: int = 200) -> str:
 
 
 def human_click(page: Page, target: Locator) -> None:
+    if before_click:
+        before_click()
     mouse.click_element(page, target)
 
 
@@ -261,7 +241,7 @@ def live_join(page: Page, args: argparse.Namespace, rep: Reporter, join_button: 
 
 
 def join(page: Page, args: argparse.Namespace, rep: Reporter) -> Outcome | None:
-    page.goto(args.url, wait_until="domcontentloaded", timeout=60_000)
+    page.goto(args.meet_url or args.url, wait_until="domcontentloaded", timeout=60_000)
 
     name_input = page.locator(NAME_INPUT).first
     join_button = page.get_by_role("button", name=JOIN_BUTTON).first
@@ -330,7 +310,8 @@ def join(page: Page, args: argparse.Namespace, rep: Reporter) -> Outcome | None:
     return ("call_ended", "timeout_exceeded_waiting_room", f"not admitted within {args.waiting_room_timeout}s")
 
 
-def attend(page: Page, args: argparse.Namespace, rep: Reporter) -> Outcome:
+def attend_join_only(page: Page, args: argparse.Namespace, rep: Reporter) -> Outcome:
+    """Today's in-call behaviour, unchanged (--join-only): devices off, watch until the call ends."""
     rep.status("in_call_not_recording", page=page)
     turn_off_devices(page, rep)
 
@@ -375,6 +356,301 @@ def attend(page: Page, args: argparse.Namespace, rep: Reporter) -> Outcome:
         page.wait_for_timeout(1_000)
 
 
+# ---- service mode: everything after admission (docs/SPEC.md 5.3) ----
+
+MIC_ON = re.compile(r"^turn on microphone", re.I)
+MIC_OFF = re.compile(r"^turn off microphone", re.I)
+SHARE_BUTTON = re.compile(r"^(share screen|present now|present)\b", re.I)
+SHARE_MENU_WINDOW = re.compile(r"\b(a )?window\b", re.I)
+STOP_SHARE = re.compile(r"^stop (presenting|sharing|screen ?shar)", re.I)
+PRESENTING_TEXT = re.compile(r"you('re| are) presenting", re.I)
+SHARE_CONFIRM = 10
+TICK_MS = 500
+
+
+def turn_on_mic(page: Page, rep: Reporter) -> bool:
+    off = page.get_by_role("button", name=MIC_OFF).first
+    on = page.get_by_role("button", name=MIC_ON).first
+    for _ in range(12):
+        if off.is_visible():
+            return True
+        if on.is_visible():
+            try:
+                human_click(page, on)
+            except PlaywrightError:
+                pass
+        page.wait_for_timeout(500)
+    return off.is_visible()
+
+
+def is_presenting(page: Page) -> bool:
+    try:
+        if page.get_by_role("button", name=STOP_SHARE).first.is_visible():
+            return True
+        return bool(page.get_by_text(PRESENTING_TEXT).first.is_visible())
+    except PlaywrightError:
+        return False
+
+
+class InCall:
+    """The service side of a call: the camera page, sound, people, screen share."""
+
+    def __init__(self, p: Playwright, page: Page, args: argparse.Namespace, rep: Reporter, cfg: BotConfig,
+                 control: ControlServer | None):
+        self.p, self.page, self.args, self.rep, self.cfg, self.control = p, page, args, rep, cfg, control
+        self.pages = None
+        self.audio = None
+        self.people = None
+        self.webhooks = None
+        self.pictures = None
+        self.speakers = None
+        self.sharing_url: str | None = None
+        self.not_presenting_since: float | None = None
+
+    # -- start (docs/SPEC.md 5.3, steps 2 to 6) --
+
+    def start(self) -> Outcome | None:
+        import participants
+        from webhooks import WebhookSender
+
+        page, rep, cfg = self.page, self.rep, self.cfg
+        self.webhooks = WebhookSender(rep.log)
+        self.people = participants.People(page, cfg, rep, self.webhooks, open_panel=self._click)
+        self.people.tick(initial=True)
+
+        audio_endpoint = cfg.endpoint_for("audio_separate_raw.data", "websocket")
+        if audio_endpoint:
+            import audio
+
+            self.audio = audio.start_for(self.args, cfg, audio_endpoint.url, rep, self.people)
+        else:
+            rep.log("no audio_separate_raw.data endpoint: the call's sound is not streamed")
+
+        if cfg.camera_url:
+            import pages
+
+            global before_click
+            self.pages = pages.PageBrowser(self.p, rep.log, insecure=[cfg.camera_url], share_title=self.args.share_title)
+            before_click = self.pages.keep_below
+            if not self.pages.open_camera(cfg.camera_url):
+                return ("fatal", "bot_errored", "the camera page could not be opened")
+            if turn_on_mic(page, rep):
+                rep.log("microphone ON in Meet: the camera page is the bot's voice")
+            else:
+                rep.log("warning: could not confirm the microphone is on")
+            if not turn_off(page, "camera"):
+                rep.log("warning: could not confirm the camera is off")
+        else:
+            rep.log("no camera page: the bot only joins and listens")
+            turn_off_devices(page, rep)
+
+        self._start_extras()
+        rep.status("in_call_recording", page=page)
+        return None
+
+    def _start_extras(self) -> None:
+        """Task 11 and 12: camera pictures and the speaker timeline. Failures here never touch the call."""
+        try:
+            import extras
+
+            self.pictures, self.speakers = extras.start(self)
+        except Exception as exc:  # noqa: BLE001 - optional features must never end a call
+            self.rep.log(f"extras not started: {type(exc).__name__}: {exc}")
+
+    def _click(self, target: Locator) -> None:
+        human_click(self.page, target)
+
+    # -- every tick --
+
+    def tick(self) -> None:
+        if self.control:
+            while (command := self.control.next_command()) is not None:
+                self.handle(command)
+        if self.people:
+            self.people.tick()
+        if self.pages:
+            self.pages.tick()
+        if self.sharing_url:
+            self._watch_share()
+        for extra in (self.pictures, self.speakers):
+            if extra:
+                try:
+                    extra.tick()
+                except Exception as exc:  # noqa: BLE001
+                    self.rep.log(f"{type(extra).__name__} failed and is turned off: {type(exc).__name__}: {exc}")
+                    if extra is self.pictures:
+                        self.pictures = None
+                    else:
+                        self.speakers = None
+
+    def others(self) -> int | None:
+        return self.people.count_others() if self.people else None
+
+    # -- screen share (docs/SPEC.md 5.5) --
+
+    def handle(self, command) -> None:
+        try:
+            if command.action == "screenshare":
+                ok, detail = self.start_share(command.body["url"])
+                command.reply(200 if ok else 500, {"ok": ok, "detail": detail})
+            elif command.action == "screenshare_stop":
+                self.stop_share()
+                command.reply(200, {"ok": True})
+            else:
+                command.reply(404, {"detail": "unknown action"})
+        except Exception as exc:  # noqa: BLE001 - a failed share must not end the call
+            self.rep.log(f"{command.action} failed: {type(exc).__name__}: {exc}")
+            command.reply(500, {"detail": f"{type(exc).__name__}: {exc}"[:300]})
+
+    def start_share(self, url: str) -> tuple[bool, str]:
+        import pages
+
+        rep, page = self.rep, self.page
+        if self.pages is None:
+            global before_click
+            self.pages = pages.PageBrowser(self.p, rep.log, insecure=[url], share_title=self.args.share_title)
+            before_click = self.pages.keep_below
+        replacing = self.sharing_url is not None and is_presenting(page)
+        if not self.pages.open_screen(url):
+            return False, "the screen page could not be opened"
+        rep.event("screenshare", action="replace" if replacing else "start", url=safe_url(url))
+        if replacing:
+            self.sharing_url = url
+            rep.log(f"screen share now shows {safe_url(url)}")
+            rep.snapshot(page, f"share-replaced-{int(time.time())}")
+            return True, "replaced the page"
+        for attempt in (1, 2):
+            button = page.get_by_role("button", name=SHARE_BUTTON).first
+            try:
+                button.wait_for(state="visible", timeout=5_000)
+                human_click(page, button)
+            except PlaywrightError as exc:
+                rep.log(f"share attempt {attempt}: no Share screen button ({type(exc).__name__})")
+                continue
+            page.wait_for_timeout(800)
+            menu = page.get_by_role("menuitem", name=SHARE_MENU_WINDOW).first
+            try:
+                if menu.is_visible():
+                    human_click(page, menu)
+            except PlaywrightError:
+                pass
+            deadline = time.monotonic() + SHARE_CONFIRM
+            while time.monotonic() < deadline:
+                if is_presenting(page):
+                    self.sharing_url = url
+                    self.not_presenting_since = None
+                    rep.log(f"screen share started: Meet shows the bot presenting ({safe_url(url)})")
+                    rep.snapshot(page, f"share-started-{int(time.time())}")
+                    return True, "presenting"
+                dismiss_popups(page)
+                page.wait_for_timeout(500)
+            rep.log(f"share attempt {attempt}: Meet does not show the bot presenting after {SHARE_CONFIRM}s")
+            rep.snapshot(page, f"share-not-confirmed-{attempt}-{int(time.time())}")
+        self.pages.close_screen()
+        return False, "Meet did not start presenting"
+
+    def stop_share(self) -> None:
+        page, rep = self.page, self.rep
+        if is_presenting(page):
+            try:
+                human_click(page, page.get_by_role("button", name=STOP_SHARE).first)
+            except PlaywrightError:
+                pass
+            for _ in range(10):
+                if not is_presenting(page):
+                    break
+                page.wait_for_timeout(500)
+            rep.log("screen share stopped" if not is_presenting(page) else "warning: Meet still shows the bot presenting")
+            rep.snapshot(page, f"share-stopped-{int(time.time())}")
+        if self.pages:
+            self.pages.close_screen()
+        if self.sharing_url:
+            rep.event("screenshare", action="stop")
+        self.sharing_url = None
+
+    def _watch_share(self) -> None:
+        if is_presenting(self.page):
+            self.not_presenting_since = None
+            return
+        if self.not_presenting_since is None:
+            self.not_presenting_since = time.monotonic()
+            self.rep.log("Meet no longer shows the bot presenting")
+        elif time.monotonic() - self.not_presenting_since > 30:
+            self.rep.log("the screen share ended in Meet; closing the screen page")
+            self.rep.event("screenshare", action="ended_in_meet")
+            if self.pages:
+                self.pages.close_screen()
+            self.sharing_url = None
+
+    # -- the end (docs/SPEC.md 4.3 and 5.6): called AFTER call_ended is reported --
+
+    def close(self) -> None:
+        for name, fn in (("pages", lambda: self.pages and self.pages.close()),
+                         ("audio", lambda: self.audio and self.audio.stop()),
+                         ("pictures", lambda: self.pictures and self.pictures.stop()),
+                         ("speakers", lambda: self.speakers and self.speakers.stop()),
+                         ("people", lambda: self.people and self.people.close()),
+                         ("webhooks", lambda: self.webhooks and self.webhooks.close())):
+            try:
+                fn()
+            except Exception as exc:  # noqa: BLE001
+                self.rep.log(f"closing {name}: {type(exc).__name__}: {exc}")
+
+
+def attend(p: Playwright, page: Page, args: argparse.Namespace, rep: Reporter, cfg: BotConfig,
+           control: ControlServer | None) -> tuple[Outcome, InCall]:
+    rep.status("in_call_not_recording", page=page)
+    call = InCall(p, page, args, rep, cfg, control)
+    if control:
+        control.in_call.set()
+    outcome = call.start()
+    if outcome:
+        leave(page)
+        return outcome, call
+
+    started = time.monotonic()
+    seen_others = False
+    alone_since = None
+    controls_missing = 0
+    last_count = None
+    while True:
+        if stop_requested:
+            leave(page)
+            return STOPPED, call
+        if args.max_duration and time.monotonic() - started > args.max_duration:
+            leave(page)
+            return ("call_ended", "timeout_exceeded_in_call_recording", f"max duration of {args.max_duration}s reached"), call
+
+        state = probe(page)
+        if REMOVED_FROM_CALL.search(state["text"]):
+            return ("call_ended", "bot_kicked_from_call", excerpt(state["text"])), call
+        if state["inCall"]:
+            controls_missing = 0
+        else:
+            controls_missing += 1
+            if controls_missing >= 3:
+                sub_code = "call_ended_by_host" if CALL_ENDED.search(state["text"]) else None
+                return ("call_ended", sub_code, excerpt(state["text"])), call
+
+        call.tick()
+        others = call.others()
+        count = state["participants"] if others is None else others + 1
+        if count != last_count:
+            rep.log(f"people in the call (with the bot): {count}")
+            last_count = count
+        if count > 1:
+            seen_others, alone_since = True, None
+        elif count == 1 and seen_others and args.everyone_left_timeout:
+            if alone_since is None:
+                alone_since = time.monotonic()
+            if time.monotonic() - alone_since >= args.everyone_left_timeout:
+                leave(page)
+                return ("call_ended", "timeout_exceeded_everyone_left", f"alone for {args.everyone_left_timeout}s"), call
+
+        dismiss_popups(page)
+        page.wait_for_timeout(TICK_MS)
+
+
 def silent_wav() -> str:
     path = Path(tempfile.gettempdir()) / "silence.wav"
     with wave.open(str(path), "wb") as f:
@@ -385,29 +661,50 @@ def silent_wav() -> str:
     return str(path)
 
 
-def launch(p: Playwright):
+ANTI_THROTTLE = ["--disable-background-timer-throttling", "--disable-backgrounding-occluded-windows",
+                 "--disable-renderer-backgrounding"]
+
+
+def meet_flags(args: argparse.Namespace | None = None) -> list[str]:
+    """Browser A's flags. --join-only (and the mouse demo): exactly today's. Service mode: no fake devices
+    (sound goes through PulseAudio; no camera device, so the camera is simply off), no fake UI (it would
+    skip the screen picker, so the auto-select flag could not pick our window), our window picked by title
+    for "Share screen", and no background throttling."""
     width, height = os.environ.get("SCREEN_SIZE", "1280x720").split("x")
+    common = [
+        "--disable-blink-features=AutomationControlled",
+        "--disable-dev-shm-usage",
+        "--lang=en-US",
+        "--window-position=0,0",
+        f"--window-size={width},{height}",
+    ]
+    if args is None or args.join_only:
+        return ["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream",
+                f"--use-file-for-fake-audio-capture={silent_wav()}", *common]
+    flags = [*common, f"--auto-select-desktop-capture-source={args.share_title}", *ANTI_THROTTLE]
+    if args.meet_url and needs_secure_flag(args.meet_url):
+        # TEST ONLY (the fake meeting is served over plain http on the test network).
+        flags.append(f"--unsafely-treat-insecure-origin-as-secure={origin(args.meet_url)}")
+    return flags
+
+
+def launch(p: Playwright, args: argparse.Namespace | None = None):
+    env = None
+    if args is not None and not args.join_only:
+        env = {**os.environ, "PULSE_SINK": "meet_out", "PULSE_SOURCE": "agent_mic"}
     return p.chromium.launch(
         channel="chrome" if shutil.which("google-chrome") else None,
         headless=False,
-        args=[
-            "--use-fake-ui-for-media-stream",
-            "--use-fake-device-for-media-stream",
-            f"--use-file-for-fake-audio-capture={silent_wav()}",
-            "--disable-blink-features=AutomationControlled",
-            "--disable-dev-shm-usage",
-            "--lang=en-US",
-            "--window-position=0,0",
-            f"--window-size={width},{height}",
-        ],
+        args=meet_flags(args),
+        env=env,
         ignore_default_args=["--enable-automation"],
         handle_sigint=False,
         handle_sigterm=False,
     )
 
 
-def parse_args() -> argparse.Namespace:
-    env = os.environ.get
+def parse_args(argv: list[str] | None = None, environ: dict | None = None) -> argparse.Namespace:
+    env = (environ if environ is not None else os.environ).get
     parser = argparse.ArgumentParser(description="Join a Google Meet call as a signed-out guest.")
     parser.add_argument("url", nargs="?", default=env("MEET_URL"), help="Meet link, e.g. https://meet.google.com/abc-defg-hij")
     parser.add_argument("--name", default=env("BOT_NAME", "Meeting Notetaker"), help="display name shown to participants")
@@ -445,7 +742,36 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--type-name", action="store_true", default=env("TYPE_NAME") == "1",
                         help="click into the name field and type the name key by key through VNC, in the rhythm of "
                              "your recorded live join, instead of filling it in (needs --input vnc)")
-    args = parser.parse_args()
+    # ---- service mode ----
+    parser.add_argument("--join-only", action="store_true", default=env("JOIN_ONLY") == "1",
+                        help="behave exactly like the proven join test: fake devices, no pages, no sound, no webhooks")
+    parser.add_argument("--camera-url", default=env("CAMERA_URL"),
+                        help="the camera page: its sound is the bot's voice, and it hears the call")
+    parser.add_argument("--audio-url", default=env("AUDIO_WS_URL"),
+                        help="websocket for the call's sound (audio_separate_raw.data), without the manager")
+    parser.add_argument("--events-url", default=env("EVENTS_URL"),
+                        help="webhook for participant join/leave, without the manager")
+    parser.add_argument("--meet-url", default=env("MEET_URL_OVERRIDE"),
+                        help="TEST ONLY: open this page instead of the Meet link (the fake meeting)")
+    parser.add_argument("--control-port", type=int, default=int(env("CONTROL_PORT", "8080")),
+                        help="port of the control server (leave, screen share); 0 = none")
+    parser.add_argument("--share-title", default=env("SHARE_TITLE", "xbot screen share"),
+                        help="the title our screen-share window carries; Chrome picks the window by it")
+    parser.add_argument("--no-camera-pictures", action="store_true", default=env("CAMERA_PICTURES") == "0",
+                        help="don't send each person's camera picture (video_separate_png.data)")
+    parser.add_argument("--per-person-audio", action="store_true", default=env("PER_PERSON_AUDIO") == "1",
+                        help="EXPERIMENTAL: one audio stream per person instead of one for the whole call")
+    args = parser.parse_args(argv)
+    args.manager = None
+    args.config = None
+    if not args.url:
+        link = ManagerLink.from_env() if environ is None else None
+        if link:
+            args.manager = link
+            args.config = link.fetch_config()
+            args.url = args.config.meeting_url
+            args.name = args.config.bot_name
+            args.meet_url = args.meet_url or args.config.meet_url_override
     if not args.url or urlparse(args.url).hostname != "meet.google.com" or not urlparse(args.url).path.strip("/"):
         parser.error("a meeting link like https://meet.google.com/abc-defg-hij is required")
     if args.replay_session:
@@ -460,16 +786,49 @@ def parse_args() -> argparse.Namespace:
     code = re.search(r"\b[a-z]{3}-[a-z]{4}-[a-z]{3}\b", urlparse(args.url).path)
     if code:
         args.url = f"https://meet.google.com/{code.group(0)}"
+    if args.config is None:
+        endpoints = []
+        if args.audio_url:
+            endpoints.append({"type": "websocket", "url": args.audio_url, "events": ["audio_separate_raw.data"]})
+        if args.events_url:
+            endpoints.append({"type": "webhook", "url": args.events_url,
+                              "events": ["participant_events.join", "participant_events.leave"]})
+        args.config = BotConfig.from_dict({"meeting_url": args.url, "bot_name": args.name, "camera_url": args.camera_url,
+                                           "endpoints": endpoints, "bot_id": env("BOT_ID") or "xbot_local"})
+    elif args.camera_url:
+        args.config.camera_url = args.camera_url
     return args
 
 
-def main() -> int:
-    global mouse
-    args = parse_args()
+def run_folder(args: argparse.Namespace) -> Path:
     meeting = urlparse(args.url).path.strip("/").replace("/", "_") or "meet"
-    rep = Reporter(args.output / f"{datetime.now():%Y%m%d-%H%M%S}-{meeting}")
-    options = {k: str(v) if isinstance(v, Path) else v for k, v in vars(args).items() if k != "vnc_client"}
-    (rep.run_dir / "options.json").write_text(json.dumps(options, indent=1))
+    return args.output / f"{datetime.now():%Y%m%d-%H%M%S}-{meeting}"
+
+
+def options_for_file(args: argparse.Namespace) -> dict:
+    """options.json, with no tokens: xebit URLs are cut to host and path."""
+    skip = {"vnc_client", "manager", "config"}
+    out = {k: str(v) if isinstance(v, Path) else v for k, v in vars(args).items() if k not in skip}
+    for key in ("camera_url", "audio_url", "events_url"):
+        if out.get(key):
+            out[key] = safe_url(out[key])
+    cfg = args.config
+    out["service"] = {"bot_id": cfg.bot_id, "camera_page": safe_url(cfg.camera_url) if cfg.camera_url else None,
+                      "endpoints": [{"type": e.type, "url": safe_url(e.url), "events": e.events} for e in cfg.endpoints],
+                      "manager": bool(args.manager)}
+    return out
+
+
+def main() -> int:
+    global mouse, before_click
+    args = parse_args()
+    send = args.manager.report if args.manager else None
+    rep = Reporter(run_folder(args), send=send, tee=True)
+    (rep.run_dir / "options.json").write_text(json.dumps(options_for_file(args), indent=1))
+    if args.manager and send:
+        send({"run_dir": rep.run_dir.name})
+    if args.meet_url:
+        rep.log(f"TEST MODE: opening {args.meet_url} instead of the Meet link")
     mouse = human_mouse.HumanMouse(args.mouse)
     rep.log(f"mouse: replaying your {len(mouse.recordings)} recorded clicks" if mouse.recordings
             else f"mouse: nothing recorded at {args.mouse}, using synthetic human-like movement")
@@ -481,9 +840,21 @@ def main() -> int:
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, request_stop)
 
+    def leave_requested() -> None:
+        global stop_requested
+        rep.log("leave requested by the manager")
+        stop_requested = True
+
+    control = None
+    if args.control_port:
+        token = args.manager.token if args.manager else None
+        control = ControlServer(args.control_port, token, leave_requested).start()
+        rep.log(f"control server on port {control.port}")
+
     admitted = False
+    call = None
     with sync_playwright() as p:
-        browser = launch(p)
+        browser = launch(p, args)
         context = browser.new_context(no_viewport=True, locale="en-US", permissions=["camera", "microphone"])
         if args.trace:
             context.tracing.start(screenshots=True, snapshots=True)
@@ -499,16 +870,35 @@ def main() -> int:
             ox, oy = mouse.origin
             mouse.move_to(ox + mouse.sequence["start"]["x"], oy + mouse.sequence["start"]["y"])
         rep.status("joining_call", message=f"{args.url} as {args.name!r}")
+        if control:
+            control.status = "joining_call"
         try:
             outcome = join(page, args, rep)
             if outcome is None:
                 admitted = True
-                outcome = attend(page, args, rep)
+                if args.join_only:
+                    outcome = attend_join_only(page, args, rep)
+                else:
+                    outcome, call = attend(p, page, args, rep, args.config, control)
         except Exception as exc:
             outcome = ("fatal", "bot_errored", f"{type(exc).__name__}: {exc}".splitlines()[0])
+            if admitted:
+                leave(page)
+        if control:
+            control.in_call.clear()
+            control.fail_pending()
+            control.status = outcome[0]
+        # call_ended FIRST, then close the camera page (docs/SPEC.md 4.3).
         rep.status(*outcome, page=page)
+        if call:
+            call.close()
+        before_click = None
         if args.trace:
             context.tracing.stop(path=rep.run_dir / "trace.zip")
+        try:
+            (rep.run_dir / "final-page.html").write_text(page.content())
+        except PlaywrightError:
+            pass
         rep.status("done", message=f"artifacts in {rep.run_dir}")
         if args.hold:
             rep.log("holding the browser open for the live view; Ctrl+C or docker stop to exit")
@@ -521,6 +911,8 @@ def main() -> int:
             browser.close()
         except PlaywrightError:
             pass
+    if control:
+        control.stop()
     return 0 if admitted or outcome[1] == "dry_run" else 1
 
 

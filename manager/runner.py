@@ -56,9 +56,12 @@ class Runner(Protocol):
         """Remove the stopped container."""
 
 
-def post_json(url: str, body: dict | None, timeout: float, method: str = "POST") -> tuple[int, dict]:
+def post_json(url: str, body: dict | None, timeout: float, method: str = "POST", token: str | None = None) -> tuple[int, dict]:
     data = json.dumps(body or {}).encode()
-    req = urllib.request.Request(url, data=data, method=method, headers={"Content-Type": "application/json"})
+    headers = {"Content-Type": "application/json"}
+    if token:
+        headers["X-Bot-Token"] = token
+    req = urllib.request.Request(url, data=data, method=method, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return resp.status, json.loads(resp.read() or b"{}")
@@ -80,6 +83,7 @@ class DockerRunner:
 
         self.settings = settings
         self.client = docker.from_env()
+        self.token_for = lambda bot_id: None  # set by the app: each bot's own token
 
     def _name(self, bot: Bot) -> str:
         return f"xbot-{bot.id.removeprefix('xbot_')}"
@@ -125,7 +129,7 @@ class DockerRunner:
         return Started(container=container.name, live_view_url=live)
 
     def command(self, bot: Bot, action: str, body: dict | None = None, timeout: float = 10) -> tuple[int, dict]:
-        return post_json(f"http://{self._name(bot)}:{CONTROL_PORT}/{action}", body, timeout)
+        return post_json(f"http://{self._name(bot)}:{CONTROL_PORT}/{action}", body, timeout, token=self.token_for(bot.id))
 
     def _container(self, bot: Bot):
         import docker.errors
