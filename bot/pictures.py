@@ -75,6 +75,7 @@ class CameraPictures:
         self.socket = Socket(url, rep.log, "pictures", **({"connect": connect} if connect else {}))
         self.last_tick = 0.0
         self.last_sent: dict[str, tuple[str, float]] = {}
+        self.last_boxes: dict[str, tuple] = {}
         self.last_saved: dict[str, float] = {}
         self.sent: dict[str, int] = {}
         self.folder = rep.run_dir / "camera"
@@ -109,7 +110,12 @@ class CameraPictures:
             return
         self.last_tick = now
         started = time.perf_counter()
-        boxes = self.boxes()
+        found = self.boxes()
+        # Only tiles that are where they were at the last tick: a picture cut while the layout moves (someone
+        # joins or leaves, a share starts) would show part of another tile.
+        keys = {pid: tuple(round(box[k]) for k in ("x", "y", "width", "height")) for pid, box, _ in found}
+        boxes = [(pid, box, kind) for pid, box, kind in found if self.last_boxes.get(pid) == keys[pid]]
+        self.last_boxes = keys
         if not boxes:
             return
         # JPEG: much faster for Chrome to make than PNG (the same pixels still give the same bytes, so an

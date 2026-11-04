@@ -239,7 +239,9 @@ Read in Chromium's source (tags 120 to 145) and checked in the bot image:
 - **Camera pictures are cut from a screenshot of Meet's page** (Playwright, through the DevTools protocol;
   `caret="initial"` so Playwright adds nothing to the page), not from video elements, so no code runs in
   Meet. Only people in the roster are sent, so the bot's own tile never is. A picture that hasn't changed
-  is sent again every 5 s (not never), so xebit's picture of a camera-off person stays fresh.
+  is sent again every 5 s (not never), so xebit's picture of a camera-off person stays fresh. A picture is
+  sent only when the person's tile is where it was at the previous tick (0.5 s before): a picture cut while
+  the layout moves showed part of another tile (seen once in the tests from a fresh clone).
 - **Per-person audio taps Meet's `<audio>` elements from an isolated world** (DevTools
   `Page.createIsolatedWorld` + a binding only that world has), after admission only and only with the flag.
   Nothing runs in Meet's page world. If nobody can be named for 10 s of sound, or no sound comes for 15 s,
