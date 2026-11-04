@@ -139,6 +139,18 @@ const LATER = { id: "spaces/fakeSpace/devices/203", name: "Meera", color: "#1a73
 const SELF_ID = "spaces/fakeSpace/devices/250";
 
 document.addEventListener("click", (e) => { state.clicks.push([Math.round(e.clientX), Math.round(e.clientY), e.isTrusted]); }, true);
+state.presses = [];
+// How long each press is held (a release that arrives late shows here). After admission they must be short.
+state.holds = []; let downAt = null;
+for (const kind of ["pointerdown", "pointerup"]) {
+  document.addEventListener(kind, (e) => {
+    const now = Math.round(performance.now());
+    state.presses.push([kind, Math.round(e.clientX), Math.round(e.clientY), e.target.id || e.target.tagName, now]);
+    state.presses = state.presses.slice(-30);
+    if (kind === "pointerdown") downAt = now;
+    else if (downAt !== null) { state.holds.push([state.phase, now - downAt, e.target.id || e.target.tagName]); downAt = null; }
+  }, true);
+}
 
 // ---- microphone: measure what Meet would send (level and strongest frequency) ----
 let ctx = null, analyser = null;

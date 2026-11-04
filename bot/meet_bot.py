@@ -96,6 +96,20 @@ def human_click(page: Page, target: Locator) -> None:
     if before_click:
         before_click()
     mouse.click_element(page, target)
+    if before_click:
+        nudge()  # in the call: make sure the release has reached the page
+
+
+def nudge() -> None:
+    """A 1-pixel move. x11vnc sometimes holds a click's release until the next pointer event (seen in the
+    fake-meeting tests: a press on the name field was released 8 s later, on the next movement); a
+    tiny move delivers it."""
+    time.sleep(0.15)
+    try:
+        x, y = mouse.position()
+        mouse.move_to(x + 1, y)
+    except Exception:  # noqa: BLE001 - never let this break a click
+        pass
 
 
 def dismiss_popups(page: Page, names: re.Pattern = TIP_BUTTON) -> None:
@@ -172,7 +186,8 @@ def sequence_mismatch(page: Page, layout: dict, seq: dict) -> str | None:
     return None
 
 
-def prejoin_clicks(page: Page, rep: Reporter, layout: dict, join_button: Locator, knock: bool) -> None:
+def prejoin_clicks(page: Page, rep: Reporter, layout: dict, join_button: Locator, knock: bool,
+                   retry_knock: bool = False) -> None:
     seq = mouse.sequence
     reason = sequence_mismatch(page, layout, seq) if seq else None
     if seq and reason:
@@ -189,13 +204,26 @@ def prejoin_clicks(page: Page, rep: Reporter, layout: dict, join_button: Locator
             rep.log("the recorded knock didn't register; clicking Ask to join again")
     turn_off_devices(page, rep)
     if knock:
-        human_click(page, join_button)
-        time.sleep(QUIET_AFTER_KNOCK)
-        try:
-            join_button.wait_for(state="hidden", timeout=10_000)
-        except PlaywrightError:
-            raise RuntimeError("clicked Ask to join but the click didn't register. Is another live-view tab "
-                               "(an older, interactive one) sending input?") from None
+        for attempt in (1, 2) if retry_knock else (1,):
+            human_click(page, join_button)
+            time.sleep(QUIET_AFTER_KNOCK)
+            try:
+                join_button.wait_for(state="hidden", timeout=10_000)
+                return
+            except PlaywrightError:
+                if attempt == 1 and retry_knock:
+                    # Service mode only (--join-only keeps today's single click). First a 1-pixel move: it
+                    # delivers a release x11vnc may still hold; click again only if that wasn't it.
+                    rep.log("the click on Ask to join didn't register; moving the mouse a pixel")
+                    nudge()
+                    try:
+                        join_button.wait_for(state="hidden", timeout=5_000)
+                        rep.log("it registered after the move")
+                        return
+                    except PlaywrightError:
+                        rep.log("still not registered; clicking Ask to join again")
+        raise RuntimeError("clicked Ask to join but the click didn't register. Is another live-view tab "
+                           "(an older, interactive one) sending input?")
 
 
 def live_join(page: Page, args: argparse.Namespace, rep: Reporter, join_button: Locator) -> str:
@@ -287,7 +315,7 @@ def join(page: Page, args: argparse.Namespace, rep: Reporter) -> Outcome | None:
             path.write_text(json.dumps({**layout, "bot_name": args.name, "captured_at": captured}, indent=1))
             rep.log(f"saved the pre-join layout to {path}: {layout}")
         rep.snapshot(page, "prejoin")
-        prejoin_clicks(page, rep, layout, join_button, knock=not args.dry_run)
+        prejoin_clicks(page, rep, layout, join_button, knock=not args.dry_run, retry_knock=not args.join_only)
         if args.dry_run:
             return ("call_ended", "dry_run", f'pre-join screen OK, stopped before clicking "{label}"')
         rep.log(f'clicked "{label}"')

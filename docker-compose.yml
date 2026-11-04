@@ -25,6 +25,7 @@ services:
       - path: .env
         required: false
     environment:
+      MANAGER_PORT: "8090"  # inside the container; MANAGER_PORT in .env only changes the port on your Mac
       BOT_IMAGE: meeting-bot:latest
       MANAGER_INTERNAL_URL: http://manager:8090
       DOCKER_NETWORK: meeting-bot

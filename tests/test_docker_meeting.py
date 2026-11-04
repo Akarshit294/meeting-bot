@@ -128,6 +128,12 @@ def test_joined_through_the_real_join_code(run):
     assert codes(run["final"])[:4] == ["joining_call", "in_waiting_room", "in_call_not_recording", "in_call_recording"]
 
 
+def test_clicks_in_the_call_are_released_at_once(run):
+    holds = [h for h in run["meet_after"]["holds"] if h[0] != "prejoin"]
+    assert holds, "the bot clicked in the call"
+    assert all(ms < 1000 for _, ms, _ in holds), holds
+
+
 def test_joins_for_people_already_there_not_the_bot(run):
     joins = [h["body"] for h in run["hooks"] if h["body"]["event"] == "participant_events.join"]
     names = [j["data"]["data"]["participant"]["name"] for j in joins]
