@@ -13,6 +13,7 @@ window (X Composite).
 from __future__ import annotations
 
 import os
+import shutil
 import time
 from typing import Callable
 
@@ -62,8 +63,14 @@ class PageBrowser:
             flags.append("--unsafely-treat-insecure-origin-as-secure=" + ",".join(origins))
         self.insecure = origins
         env = {**os.environ, "PULSE_SINK": "agent_out", "PULSE_SOURCE": "meet_out.monitor"}
-        self.browser = p.chromium.launch(headless=False, args=flags, env=env)
-        self.log("page browser started (camera page plays into agent_out, hears meet_out.monitor)")
+        # Google Chrome, like Recall's bot (it has the H.264/AAC codecs a page may record with); Playwright's
+        # Chromium only where Chrome isn't available (arm64).
+        channel = "chrome" if shutil.which("google-chrome") else None
+        self.browser = p.chromium.launch(channel=channel, headless=False, args=flags, env=env)
+        self.camera_lost: str | None = None
+        self._closing = False
+        self.log(f"page browser started ({channel or 'chromium'}; the camera page plays into agent_out and hears "
+                 "meet_out.monitor)")
 
     def _new_window(self):
         context = self.browser.new_context(no_viewport=True, permissions=["microphone"], locale="en-US")
@@ -71,21 +78,36 @@ class PageBrowser:
         self.keep_below(force=True)
         return page
 
-    def open_camera(self, url: str, attempts: int = 3) -> bool:
+    def open_camera(self, url: str, attempts: int = 3, should_stop: Callable[[], bool] = lambda: False) -> bool:
+        if self.camera is not None:
+            self._close_page(self.camera)
+            self.camera = None
         for attempt in range(1, attempts + 1):
+            if should_stop():
+                return False
             try:
-                self.camera = self._new_window()
-                self.camera.on("console", lambda m: m.type == "error" and self.log(f"camera page console: {redact(m.text)[:200]}"))
-                self.camera.goto(url, wait_until="domcontentloaded", timeout=30_000)
+                page = self._new_window()
+                self.camera = page
+                page.on("console", lambda m: m.type == "error" and self.log(f"camera page console: {redact(m.text)[:200]}"))
+                page.on("crash", lambda _p: self._lost("crashed"))
+                page.on("close", lambda _p: None if self._closing or self.camera is not page else self._lost("closed"))
+                page.goto(url, wait_until="domcontentloaded", timeout=30_000)
                 self.keep_below(force=True)
+                self.camera_lost = None
                 self.log(f"camera page open: {safe_url(url)}")
                 return True
             except PlaywrightError as exc:
                 self.log(f"camera page {safe_url(url)} did not open (try {attempt}): {redact(str(exc).splitlines()[0])}")
+                self._closing = True
                 self._close_page(self.camera)
+                self._closing = False
                 self.camera = None
                 time.sleep(2 * attempt)
         return False
+
+    def _lost(self, how: str) -> None:
+        self.camera_lost = how
+        self.log(f"the camera page {how}")
 
     def open_screen(self, url: str) -> bool:
         """Open (or re-point) the screen-share window. The window keeps the same title, so a running
@@ -96,7 +118,7 @@ class PageBrowser:
                 cdp = self.screen.context.new_cdp_session(self.screen)
                 window = cdp.send("Browser.getWindowForTarget")["windowId"]
                 cdp.send("Browser.setWindowBounds", {"windowId": window, "bounds": {"windowState": "fullscreen"}})
-            self.screen.goto(url, wait_until="domcontentloaded", timeout=30_000)
+            self.screen.goto(url, wait_until="domcontentloaded", timeout=15_000)
             self.screen.evaluate(KEEP_TITLE_JS, self.share_title)
             self.screen.wait_for_timeout(500)
             found = xwin.mark_shareable(self.share_title)
@@ -133,6 +155,7 @@ class PageBrowser:
         self.keep_below()
 
     def close(self) -> None:
+        self._closing = True
         self.close_screen()
         if self.camera is not None:
             self._close_page(self.camera)

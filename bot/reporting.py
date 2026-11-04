@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import sys
 import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
@@ -59,6 +60,7 @@ class Reporter:
         self.last: str | None = None
         self.codes: list[str] = []
         self._send = send
+        self.unsent: list[dict] = []
         self._lock = threading.Lock()
         if tee and not isinstance(sys.stdout, Tee):
             sys.stdout = Tee(sys.stdout, run_dir / "bot.log")
@@ -82,10 +84,33 @@ class Reporter:
                 f.write(json.dumps(event) + "\n")
             self.log(f"STATUS {code}" + (f" [{sub_code}]" if sub_code else "") + (f" - {message}" if message else ""))
             if self._send:
-                self._send({"code": code, "sub_code": sub_code, "message": message, "run_dir": self.run_dir.name})
+                # In order: a status is sent only after every earlier one has reached the manager.
+                self.unsent.append({"code": code, "sub_code": sub_code, "message": message, "run_dir": self.run_dir.name})
+                self._drain()
         if page is not None:
             self.snapshot(page, f"{self.count:02d}-{code}", html=code in ("fatal", "call_ended"))
         return True
+
+    def flush(self, wait: float = 0) -> bool:
+        """Send the statuses the manager has not got yet (it was down or restarting). With `wait`, keep
+        trying that many seconds. Returns True when nothing is left."""
+        if not self._send:
+            return True
+        deadline = time.monotonic() + wait
+        while True:
+            with self._lock:
+                if self._drain(late=True):
+                    return True
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(1)
+
+    def _drain(self, late: bool = False) -> bool:
+        while self.unsent and self._send(self.unsent[0]):
+            if late:
+                self.log(f"reported {self.unsent[0]['code']} to the manager (late)")
+            self.unsent.pop(0)
+        return not self.unsent
 
     def event(self, kind: str, **data) -> None:
         """Other things worth keeping, one line each in `timeline.jsonl` (participants, screen share...)."""

@@ -27,10 +27,11 @@ ENV PYTHONUNBUFFERED=1 \
     DISPLAY=:99 \
     SCREEN_SIZE=1280x720
 
-# Browser A (Meet): Google Chrome, as in the proven join. Browser B (our pages): Playwright's Chromium.
+# Both browsers (Meet, and our own pages) are Google Chrome, as in the proven join. Chrome has no arm64
+# Linux build, so there Playwright's Chromium is used instead.
 RUN pip install --no-cache-dir "playwright==${PLAYWRIGHT_VERSION}" \
  && if [ "$TARGETARCH" = "arm64" ]; then playwright install --with-deps chromium; \
-    else playwright install --with-deps chrome chromium; fi \
+    else playwright install --with-deps chrome; fi \
  && rm -rf /var/lib/apt/lists/*
 
 RUN apt-get update \

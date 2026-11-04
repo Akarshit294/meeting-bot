@@ -393,7 +393,9 @@ SHARE_MENU_WINDOW = re.compile(r"\b(a )?window\b", re.I)
 STOP_SHARE = re.compile(r"^stop (presenting|sharing|screen ?shar)", re.I)
 PRESENTING_TEXT = re.compile(r"you('re| are) presenting", re.I)
 SHARE_CONFIRM = 10
-TICK_MS = 500
+TICK_MS = 200
+PROBE_EVERY = 1.0
+MAX_TICK_FAILURES = 40
 
 
 def turn_on_mic(page: Page, rep: Reporter) -> bool:
@@ -420,6 +422,30 @@ def is_presenting(page: Page) -> bool:
         return False
 
 
+def probe_in_call(page: Page) -> dict:
+    """Like probe(), with short timeouts: in the call nothing may hang for 30 s."""
+    try:
+        text = page.locator("body").inner_text(timeout=3_000)
+    except PlaywrightError:
+        text = ""
+    leave_buttons = page.locator('[aria-label^="Leave call" i]')
+    return {
+        "text": text.replace("‘", "'").replace("’", "'").lower(),
+        # In the page at all (a control bar that hides itself must not look like the end of the call)...
+        "inCall": leave_buttons.count() > 0,
+        # ...and on screen (a removal text with a usable Leave button is only chat).
+        "leaveShown": leave_buttons.filter(visible=True).count() > 0,
+        "participants": page.locator("[data-participant-id]").count(),
+    }
+
+
+def safe_leave(page: Page) -> None:
+    try:
+        leave(page)
+    except Exception:  # noqa: BLE001 - leaving must never crash the bot before it reports
+        pass
+
+
 class InCall:
     """The service side of a call: the camera page, sound, people, screen share."""
 
@@ -433,7 +459,19 @@ class InCall:
         self.pictures = None
         self.speakers = None
         self.sharing_url: str | None = None
-        self.not_presenting_since: float | None = None
+        self.share_pending: dict | None = None
+        self.share_lost_logged = False
+        self.camera_reopens = 0
+
+    def _page_browser(self, first_url: str):
+        import pages
+
+        global before_click
+        if self.pages is None:
+            self.pages = pages.PageBrowser(self.p, self.rep.log, insecure=[self.cfg.camera_url, first_url],
+                                           share_title=self.args.share_title)
+            before_click = self.pages.before_click
+        return self.pages
 
     # -- start (docs/SPEC.md 5.3, steps 2 to 6) --
 
@@ -445,6 +483,8 @@ class InCall:
         self.webhooks = WebhookSender(rep.log)
         self.people = participants.People(page, cfg, rep, self.webhooks, open_panel=self._click)
         self.people.tick(initial=True)
+        if stop_requested:
+            return STOPPED
 
         audio_endpoint = cfg.endpoint_for("audio_separate_raw.data", "websocket")
         if audio_endpoint:
@@ -455,22 +495,24 @@ class InCall:
             rep.log("no audio_separate_raw.data endpoint: the call's sound is not streamed")
 
         if cfg.camera_url:
-            import pages
-
-            global before_click
-            self.pages = pages.PageBrowser(self.p, rep.log, insecure=[cfg.camera_url], share_title=self.args.share_title)
-            before_click = self.pages.before_click
-            if not self.pages.open_camera(cfg.camera_url):
-                return ("fatal", "bot_errored", "the camera page could not be opened")
+            self._page_browser(cfg.camera_url)
+            # Microphone first: the camera page may start speaking as soon as it loads (until it plays,
+            # the microphone carries silence).
             if turn_on_mic(page, rep):
-                rep.log("microphone ON in Meet: the camera page is the bot's voice")
+                rep.log("microphone ON in Meet: the camera page will be the bot's voice")
             else:
                 rep.log("warning: could not confirm the microphone is on")
+            if stop_requested:
+                return STOPPED
+            if not self.pages.open_camera(cfg.camera_url, should_stop=lambda: stop_requested):
+                return STOPPED if stop_requested else ("fatal", "bot_errored", "the camera page could not be opened")
             if not turn_off(page, "camera"):
                 rep.log("warning: could not confirm the camera is off")
         else:
             rep.log("no camera page: the bot only joins and listens")
             turn_off_devices(page, rep)
+        if stop_requested:
+            return STOPPED
 
         self._start_extras()
         rep.status("in_call_recording", page=page)
@@ -488,9 +530,9 @@ class InCall:
     def _click(self, target: Locator) -> None:
         human_click(self.page, target)
 
-    # -- every tick --
+    # -- every tick (any exception here is caught by the loop in attend) --
 
-    def tick(self) -> None:
+    def tick(self) -> Outcome | None:
         if self.control:
             while (command := self.control.next_command()) is not None:
                 self.handle(command)
@@ -498,7 +540,13 @@ class InCall:
             self.people.tick()
         if self.pages:
             self.pages.tick()
-        if self.sharing_url:
+            if self.pages.camera_lost:
+                outcome = self._reopen_camera()
+                if outcome:
+                    return outcome
+        if self.share_pending:
+            self._confirm_share()
+        elif self.sharing_url:
             self._watch_share()
         for extra in (self.pictures, self.speakers):
             if extra:
@@ -510,6 +558,16 @@ class InCall:
                         self.pictures = None
                     else:
                         self.speakers = None
+        return None
+
+    def _reopen_camera(self) -> Outcome | None:
+        """The camera page crashed or closed: without it the agent is mute and deaf."""
+        self.camera_reopens += 1
+        self.rep.log(f"the camera page is gone ({self.pages.camera_lost}); reopening it (try {self.camera_reopens})")
+        if self.camera_reopens <= 3 and self.pages.open_camera(self.cfg.camera_url, attempts=2,
+                                                                should_stop=lambda: stop_requested):
+            return None
+        return ("fatal", "bot_errored", "the camera page crashed and could not be reopened")
 
     def others(self) -> int | None:
         return self.people.count_others() if self.people else None
@@ -530,59 +588,72 @@ class InCall:
             self.rep.log(redact(f"{command.action} failed: {type(exc).__name__}: {exc}"))
             command.reply(500, {"detail": redact(f"{type(exc).__name__}: {exc}")[:300]})
 
-    def start_share(self, url: str) -> tuple[bool, str]:
-        import pages
+    def _click_share(self) -> bool:
+        page = self.page
+        button = page.get_by_role("button", name=SHARE_BUTTON).first
+        try:
+            button.wait_for(state="visible", timeout=5_000)
+            human_click(page, button)
+        except PlaywrightError as exc:
+            self.rep.log(f"no Share screen button ({type(exc).__name__})")
+            return False
+        page.wait_for_timeout(800)
+        menu = page.get_by_role("menuitem", name=SHARE_MENU_WINDOW).first
+        try:
+            if menu.is_visible():
+                human_click(page, menu)
+        except PlaywrightError:
+            pass
+        return True
 
+    def start_share(self, url: str) -> tuple[bool, str]:
+        """Answer as soon as the click is made (docs/SPEC.md 2.4); the bot confirms it in its log."""
         rep, page = self.rep, self.page
-        if self.pages is None:
-            global before_click
-            self.pages = pages.PageBrowser(self.p, rep.log, insecure=[url], share_title=self.args.share_title)
-            before_click = self.pages.before_click
-        replacing = self.sharing_url is not None and is_presenting(page)
-        if not self.pages.open_screen(url):
+        pages = self._page_browser(url)
+        replacing = self.sharing_url is not None and (self.share_pending is not None or is_presenting(page))
+        if not pages.open_screen(url):
             return False, "the screen page could not be opened"
         rep.event("screenshare", action="replace" if replacing else "start", url=safe_url(url))
+        self.sharing_url = url
         if replacing:
-            self.sharing_url = url
             rep.log(f"screen share now shows {safe_url(url)}")
             rep.snapshot(page, f"share-replaced-{int(time.time())}")
             return True, "replaced the page"
-        for attempt in (1, 2):
-            button = page.get_by_role("button", name=SHARE_BUTTON).first
-            try:
-                button.wait_for(state="visible", timeout=5_000)
-                human_click(page, button)
-            except PlaywrightError as exc:
-                rep.log(f"share attempt {attempt}: no Share screen button ({type(exc).__name__})")
-                continue
-            page.wait_for_timeout(800)
-            menu = page.get_by_role("menuitem", name=SHARE_MENU_WINDOW).first
-            try:
-                if menu.is_visible():
-                    human_click(page, menu)
-            except PlaywrightError:
-                pass
-            deadline = time.monotonic() + SHARE_CONFIRM
-            while time.monotonic() < deadline:
-                self.pages.keep_below(force=True)  # Chrome raises the window it starts capturing
-                if is_presenting(page):
-                    self.sharing_url = url
-                    self.not_presenting_since = None
-                    rep.log(f"screen share started: Meet shows the bot presenting ({safe_url(url)})")
-                    rep.snapshot(page, f"share-started-{int(time.time())}")
-                    page.wait_for_timeout(1_000)
-                    self.pages.keep_below(force=True)
-                    self.grab_screen("share-started")
-                    return True, "presenting"
-                dismiss_popups(page)
-                page.wait_for_timeout(500)
-            rep.log(f"share attempt {attempt}: Meet does not show the bot presenting after {SHARE_CONFIRM}s")
-            rep.snapshot(page, f"share-not-confirmed-{attempt}-{int(time.time())}")
+        if not self._click_share():
+            pages.close_screen()
+            self.sharing_url = None
+            return False, "no Share screen button in Meet"
+        self.share_pending = {"since": time.monotonic(), "attempt": 1}
+        self.share_lost_logged = False
+        return True, "clicked Share screen"
+
+    def _confirm_share(self) -> None:
+        page, rep, pending = self.page, self.rep, self.share_pending
+        self.pages.keep_below(force=True)  # Chrome raises the window it starts capturing
+        if is_presenting(page):
+            self.share_pending = None
+            rep.log(f"screen share started: Meet shows the bot presenting ({safe_url(self.sharing_url)})")
+            rep.snapshot(page, f"share-started-{int(time.time())}")
+            page.wait_for_timeout(1_000)
+            self.pages.keep_below(force=True)
+            self.grab_screen("share-started")
+            return
+        if time.monotonic() - pending["since"] < SHARE_CONFIRM:
+            return
+        rep.log(f"share attempt {pending['attempt']}: Meet does not show the bot presenting after {SHARE_CONFIRM}s")
+        rep.snapshot(page, f"share-not-confirmed-{pending['attempt']}-{int(time.time())}")
+        if pending["attempt"] == 1 and self._click_share():
+            self.share_pending = {"since": time.monotonic(), "attempt": 2}
+            return
+        rep.log("the screen share did not start")
+        rep.event("screenshare", action="failed")
+        self.share_pending = None
+        self.sharing_url = None
         self.pages.close_screen()
-        return False, "Meet did not start presenting"
 
     def stop_share(self) -> None:
         page, rep = self.page, self.rep
+        self.share_pending = None
         if is_presenting(page):
             try:
                 human_click(page, page.get_by_role("button", name=STOP_SHARE).first)
@@ -613,18 +684,14 @@ class InCall:
             self.rep.log(f"screen grab failed: {type(exc).__name__}: {exc}")
 
     def _watch_share(self) -> None:
+        """Only logs: a People panel or a new layout can hide Meet's "presenting" signs while the share
+        still runs, so the bot never stops a share on its own."""
         if is_presenting(self.page):
-            self.not_presenting_since = None
-            return
-        if self.not_presenting_since is None:
-            self.not_presenting_since = time.monotonic()
-            self.rep.log("Meet no longer shows the bot presenting")
-        elif time.monotonic() - self.not_presenting_since > 30:
-            self.rep.log("the screen share ended in Meet; closing the screen page")
-            self.rep.event("screenshare", action="ended_in_meet")
-            if self.pages:
-                self.pages.close_screen()
-            self.sharing_url = None
+            self.share_lost_logged = False
+        elif not self.share_lost_logged:
+            self.share_lost_logged = True
+            self.rep.log("Meet no longer shows the bot presenting (the share may have been stopped in Meet)")
+            self.rep.event("screenshare", action="not_shown_in_meet")
 
     # -- the end (docs/SPEC.md 4.3 and 5.6): called AFTER call_ended is reported --
 
@@ -646,10 +713,10 @@ def attend(p: Playwright, page: Page, args: argparse.Namespace, rep: Reporter, c
     rep.status("in_call_not_recording", page=page)
     call = InCall(p, page, args, rep, cfg, control)
     if control:
-        control.in_call.set()
+        control.in_call.set()  # requests now wait for the start steps; one that waits too long is dropped
     outcome = call.start()
     if outcome:
-        leave(page)
+        safe_leave(page)
         return outcome, call
 
     started = time.monotonic()
@@ -657,42 +724,64 @@ def attend(p: Playwright, page: Page, args: argparse.Namespace, rep: Reporter, c
     alone_since = None
     controls_missing = 0
     last_count = None
+    last_probe = 0.0
+    failures = 0
+    removed_text_logged = False
     while True:
         if stop_requested:
-            leave(page)
+            safe_leave(page)
             return STOPPED, call
         if args.max_duration and time.monotonic() - started > args.max_duration:
-            leave(page)
+            safe_leave(page)
             return ("call_ended", "timeout_exceeded_in_call_recording", f"max duration of {args.max_duration}s reached"), call
-
-        state = probe(page)
-        if REMOVED_FROM_CALL.search(state["text"]):
-            return ("call_ended", "bot_kicked_from_call", excerpt(state["text"])), call
-        if state["inCall"]:
-            controls_missing = 0
-        else:
-            controls_missing += 1
-            if controls_missing >= 3:
-                sub_code = "call_ended_by_host" if CALL_ENDED.search(state["text"]) else None
-                return ("call_ended", sub_code, excerpt(state["text"])), call
-
-        call.tick()
-        others = call.others()
-        count = state["participants"] if others is None else others + 1
-        if count != last_count:
-            rep.log(f"people in the call (with the bot): {count}")
-            last_count = count
-        if count > 1:
-            seen_others, alone_since = True, None
-        elif count == 1 and seen_others and args.everyone_left_timeout:
-            if alone_since is None:
-                alone_since = time.monotonic()
-            if time.monotonic() - alone_since >= args.everyone_left_timeout:
-                leave(page)
-                return ("call_ended", "timeout_exceeded_everyone_left", f"alone for {args.everyone_left_timeout}s"), call
-
-        dismiss_popups(page)
-        page.wait_for_timeout(TICK_MS)
+        try:
+            if time.monotonic() - last_probe >= PROBE_EVERY:
+                last_probe = time.monotonic()
+                rep.flush()
+                state = probe_in_call(page)
+                if REMOVED_FROM_CALL.search(state["text"]):
+                    if not state["leaveShown"]:
+                        return ("call_ended", "bot_kicked_from_call", excerpt(state["text"])), call
+                    if not removed_text_logged:  # e.g. someone typed it in the chat
+                        removed_text_logged = True
+                        rep.log("the page mentions a removal, but Meet's call controls are still there: staying")
+                if state["inCall"]:
+                    controls_missing = 0
+                else:
+                    controls_missing += 1
+                    if controls_missing >= 3:
+                        sub_code = "call_ended_by_host" if CALL_ENDED.search(state["text"]) else None
+                        return ("call_ended", sub_code, excerpt(state["text"])), call
+                others = call.others()
+                count = state["participants"] if others is None else others + 1
+                if count != last_count:
+                    rep.log(f"people in the call (with the bot): {count}")
+                    last_count = count
+                if count > 1:
+                    seen_others, alone_since = True, None
+                elif count == 1 and seen_others and args.everyone_left_timeout:
+                    if alone_since is None:
+                        alone_since = time.monotonic()
+                    if time.monotonic() - alone_since >= args.everyone_left_timeout:
+                        safe_leave(page)
+                        return ("call_ended", "timeout_exceeded_everyone_left", f"alone for {args.everyone_left_timeout}s"), call
+                dismiss_popups(page)
+            end = call.tick()
+            if end:
+                safe_leave(page)
+                return end, call
+            failures = 0
+            page.wait_for_timeout(TICK_MS)
+        except Exception as exc:  # noqa: BLE001 - one bad tick must not end a live call
+            if page.is_closed():
+                return ("fatal", "bot_errored", "Meet's page closed (the browser crashed?)"), call
+            failures += 1
+            if failures in (1, 5) or failures % 20 == 0:
+                rep.log(redact(f"in-call check failed ({failures} in a row): {type(exc).__name__}: {str(exc)[:200]}"))
+            if failures >= MAX_TICK_FAILURES:
+                safe_leave(page)
+                return ("fatal", "bot_errored", redact(f"in-call checks kept failing: {type(exc).__name__}"[:200])), call
+            time.sleep(0.5)
 
 
 def silent_wav() -> str:
@@ -871,10 +960,20 @@ def options_for_file(args: argparse.Namespace) -> dict:
 def main() -> int:
     global mouse, before_click
     args = parse_args()
-    send = args.manager.report if args.manager else None
-    rep = Reporter(run_folder(args), send=send, tee=True)
+
+    def send(body: dict) -> bool:
+        """Report to the manager. Its answer also says whether a leave was asked for (a leave that came
+        while the bot's control server was not up yet is not lost)."""
+        global stop_requested
+        reply = args.manager.report(body)
+        if reply and reply.get("leave") and not stop_requested:
+            print("leave requested (the manager's answer)", flush=True)
+            stop_requested = True
+        return reply is not None
+
+    rep = Reporter(run_folder(args), send=send if args.manager else None, tee=True)
     (rep.run_dir / "options.json").write_text(json.dumps(options_for_file(args), indent=1))
-    if args.manager and send:
+    if args.manager:
         send({"run_dir": rep.run_dir.name})
     if args.meet_url:
         rep.log(f"TEST MODE: opening {args.meet_url} instead of the Meet link")
@@ -932,13 +1031,15 @@ def main() -> int:
         except Exception as exc:
             outcome = ("fatal", "bot_errored", redact(f"{type(exc).__name__}: {exc}".splitlines()[0]))
             if admitted:
-                leave(page)
+                safe_leave(page)
         if control:
             control.in_call.clear()
             control.fail_pending()
             control.status = outcome[0]
-        # call_ended FIRST, then close the camera page (docs/SPEC.md 4.3).
+        # call_ended FIRST, then close the camera page (docs/SPEC.md 4.3): wait until the manager has it.
         rep.status(*outcome, page=page)
+        if not rep.flush(wait=20):
+            rep.log("warning: the manager has not confirmed the end status; closing the pages anyway")
         if call:
             call.close()
         before_click = None
@@ -949,6 +1050,7 @@ def main() -> int:
         except PlaywrightError:
             pass
         rep.status("done", message=f"artifacts in {rep.run_dir}")
+        rep.flush(wait=10)
         if args.hold:
             rep.log("holding the browser open for the live view; Ctrl+C or docker stop to exit")
             try:

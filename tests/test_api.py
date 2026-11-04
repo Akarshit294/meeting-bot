@@ -317,6 +317,38 @@ def test_leave_while_starting_stops_the_container(env):
     assert runner.stopped == [bot["id"]]
 
 
+def test_leave_is_kept_and_given_to_the_bot(env):
+    client, runner, store, _ = env
+    bot = make(client)
+    runner.unreachable = True
+    client.post(f"/api/v1/bot/{bot['id']}/leave_call/", headers=AUTH)
+    r = client.post(f"/internal/bots/{bot['id']}/status", headers={"X-Bot-Token": bot_token(store.secret, bot["id"])},
+                    json={"code": "joining_call"})
+    assert r.json()["leave"] is True
+
+
+def test_container_stopping_after_an_early_leave_is_a_leave(env):
+    client, runner, store, app = env
+    bot = make(client)
+    runner.unreachable = True
+    client.post(f"/api/v1/bot/{bot['id']}/leave_call/", headers=AUTH)
+    runner.states[bot["id"]] = "exited"
+    app.state.watch_once()
+    changes = store.get(bot["id"]).status_changes
+    assert [(c["code"], c["sub_code"]) for c in changes][-2:] == [("call_ended", "bot_received_leave_call"), ("done", None)]
+
+
+def test_delete_and_patch(env):
+    client, runner, store, _ = env
+    bot = make(client)
+    report(client, store, bot["id"], "in_call_recording")
+    r = client.patch(f"/api/v1/bot/{bot['id']}/", headers=AUTH, json={"metadata": {"x": 1}})
+    assert r.status_code == 200 and r.json()["id"] == bot["id"]
+    r = client.delete(f"/api/v1/bot/{bot['id']}/", headers=AUTH)
+    assert r.status_code == 200
+    assert runner.commands[-1][:2] == (bot["id"], "leave")
+
+
 def test_leave_unknown_is_404(env):
     client, *_ = env
     assert client.post("/api/v1/bot/xbot_nope/leave_call/", headers=AUTH).status_code == 404

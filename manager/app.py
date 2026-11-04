@@ -110,6 +110,10 @@ def create_app(settings: Settings, runner: Runner, store: Store | None = None, w
                 continue
             if bot.latest == "call_ended":
                 store.add_status(bot.id, "done", message="the bot's container stopped")
+            elif bot.leave_requested and bot.latest not in FINAL and bot.latest not in IN_CALL:
+                # Asked to leave before it was let in, and it stopped: that is the leave, not a failure.
+                store.add_status(bot.id, "call_ended", "bot_received_leave_call", "stopped before joining")
+                store.add_status(bot.id, "done", message="the bot's container stopped")
             elif bot.latest not in FINAL:
                 store.add_status(bot.id, "fatal", "bot_errored", "the bot's container stopped without reporting")
                 log.warning("bot %s: container stopped without reporting -> fatal/bot_errored", bot.id)
@@ -213,19 +217,43 @@ def create_app(settings: Settings, runner: Runner, store: Store | None = None, w
     def get_bot(bot_id: str):
         return find(bot_id).public()
 
+    def request_leave(bot: Bot) -> None:
+        if bot.latest in GONE:
+            return
+        # Kept, and given to the bot in the answer to its next status report: a leave is never lost.
+        store.update(bot.id, leave_requested=True)
+        if not bot.container:
+            return
+        for attempt in (1, 2):
+            try:
+                runner.command(bot, "leave", timeout=5)
+                return
+            except RunnerError as err:
+                if attempt == 2:
+                    # The control server isn't up (the container is still starting): stop the container.
+                    # The bot treats SIGTERM as a leave request, like Ctrl+C in the proven runs.
+                    log.info("bot %s: leave by SIGTERM (%s)", bot.id, err)
+                    runner.stop(bot)
+                else:
+                    time.sleep(1)
+
     @route("POST", "/bot/{bot_id}/leave_call/")
     def leave_call(bot_id: str):
-        bot = find(bot_id)
-        if bot.latest in GONE or not bot.container:
-            return bot.public()
-        try:
-            runner.command(bot, "leave", timeout=5)
-        except RunnerError as err:
-            # The control server isn't up (the container is still starting): stop the container.
-            # The bot treats SIGTERM as a leave request, exactly like Ctrl+C in the proven runs.
-            log.info("bot %s: leave by SIGTERM (%s)", bot.id, err)
-            runner.stop(bot)
+        request_leave(find(bot_id))
         return find(bot_id).public()
+
+    @route("DELETE", "/bot/{bot_id}/")
+    def delete_bot(bot_id: str):
+        """Recall deletes a bot that hasn't joined yet. Here: the same as a leave (the record stays)."""
+        request_leave(find(bot_id))
+        return find(bot_id).public()
+
+    @route("PATCH", "/bot/{bot_id}/")
+    async def update_bot(bot_id: str, request: Request):
+        """Accepted and ignored in v1 (xebit-api's client has update_bot, but v1 has nothing to change)."""
+        bot = find(bot_id)
+        await json_body(request, required=False)
+        return bot.public()
 
     @route("POST", "/bot/{bot_id}/output_media/")
     async def start_output_media(bot_id: str, request: Request):
@@ -243,7 +271,8 @@ def create_app(settings: Settings, runner: Runner, store: Store | None = None, w
             raise HTTPException(status_code=409, detail=f"The bot is not in the call (status: {bot.latest or 'none'})")
         log.info("bot %s: start screen share of %s", bot.id, safe_url(url))
         try:
-            status, reply = await run_blocking(runner.command, bot, "screenshare", {"url": url}, 60)
+            # The bot answers right after its click (xebit's client gives up after 30 s).
+            status, reply = await run_blocking(runner.command, bot, "screenshare", {"url": url}, 28)
         except RunnerError as err:
             raise HTTPException(status_code=502, detail=f"The bot did not answer: {err}") from None
         if status == 409:
@@ -259,7 +288,7 @@ def create_app(settings: Settings, runner: Runner, store: Store | None = None, w
         await json_body(request, required=False)
         if bot.container and bot.latest not in GONE:
             try:
-                await run_blocking(runner.command, bot, "screenshare_stop", {}, 30)
+                await run_blocking(runner.command, bot, "screenshare_stop", {}, 28)
             except RunnerError as err:
                 log.info("bot %s: stop screen share: %s", bot.id, err)
         store.update(bot.id, screenshare_url=None)
@@ -296,11 +325,11 @@ def create_app(settings: Settings, runner: Runner, store: Store | None = None, w
             store.update(bot.id, run_dir=str(body["run_dir"]))
         code = body.get("code")
         if not code:
-            return {"accepted": False}
+            return {"accepted": False, "leave": bot.leave_requested}
         accepted = store.add_status(bot.id, str(code), body.get("sub_code"), str(body.get("message") or "")[:500])
         log.info("bot %s: status %s%s%s", bot.id, code, f" [{body.get('sub_code')}]" if body.get("sub_code") else "",
                  "" if accepted else " (ignored: not allowed after %s)" % bot.latest)
-        return {"accepted": accepted}
+        return {"accepted": accepted, "leave": bot.leave_requested}
 
     # ---- no auth ----
 

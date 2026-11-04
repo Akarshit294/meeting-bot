@@ -90,17 +90,17 @@ class ManagerLink:
                 time.sleep(min(2 ** i, 5))
         raise RuntimeError(f"could not read the bot's config from the manager: {last}")
 
-    def report(self, body: dict, attempts: int = 3) -> bool:
+    def report(self, body: dict, attempts: int = 2) -> dict | None:
+        """The manager's answer, or None if it could not be reached (the Reporter tries again later)."""
         for i in range(attempts):
             try:
-                self._request("POST", "status", body, timeout=3)
-                return True
+                return self._request("POST", "status", body, timeout=3)
             except (urllib.error.URLError, OSError, ValueError) as err:
                 if i == attempts - 1:
                     print(f"warning: could not report {body.get('code') or 'info'} to the manager: {err}", flush=True)
                 else:
-                    time.sleep(0.5 * (i + 1))
-        return False
+                    time.sleep(0.5)
+        return None
 
 
 def safe_url(url: str | None) -> str:

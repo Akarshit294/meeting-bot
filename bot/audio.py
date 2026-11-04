@@ -22,6 +22,7 @@ RATE = 16_000
 CHUNK = 6_400  # 200 ms of 16 kHz mono 16-bit
 MIX = {"id": "meeting-mix", "name": "Meeting", "is_bot": False}
 BACKOFF = (1, 2, 4, 8)
+SEND_TIMEOUT = 5
 
 
 def iso(ts: float) -> str:
@@ -84,6 +85,7 @@ class Socket:
             if self._ws is None:
                 try:
                     ws = self._connect(self.url, timeout=10)
+                    ws.settimeout(SEND_TIMEOUT)  # a send that can't get through in time drops the socket
                     with self._lock:
                         self._ws = ws
                     # Read (and drop) what the server sends: this answers its pings. Servers like
@@ -105,10 +107,11 @@ class Socket:
             self._wake.clear()
 
     def _drain(self, ws) -> None:
-        ws.settimeout(None)
         while not self._stop.is_set() and self._ws is ws:
             try:
                 ws.recv()
+            except websocket.WebSocketTimeoutException:
+                continue  # nothing came; keep listening (the socket's timeout also bounds every send)
             except Exception:  # noqa: BLE001 - closed: the sender notices and reconnects
                 return
 
@@ -136,13 +139,17 @@ class Socket:
     def close(self) -> None:
         self._stop.set()
         self._wake.set()
-        with self._lock:
-            if self._ws is not None:
+        locked = self._lock.acquire(timeout=2)  # never hang here: a stuck send must not stop the bot's end
+        try:
+            ws, self._ws = self._ws, None
+            if ws is not None:
                 try:
-                    self._ws.close()
+                    ws.close(timeout=1)
                 except Exception:  # noqa: BLE001
                     pass
-                self._ws = None
+        finally:
+            if locked:
+                self._lock.release()
 
 
 class AudioStreamer:

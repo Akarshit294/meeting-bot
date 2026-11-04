@@ -21,6 +21,7 @@ class Command:
     body: dict
     done: threading.Event = field(default_factory=threading.Event)
     result: tuple[int, dict] = (504, {"detail": "the bot did not answer in time"})
+    abandoned: bool = False  # the caller stopped waiting: don't run it any more
 
     def reply(self, status: int, body: dict) -> None:
         self.result = (status, body)
@@ -31,7 +32,7 @@ class ControlServer:
     ACTIONS = {"screenshare", "screenshare_stop"}
 
     def __init__(self, port: int, token: str | None, on_leave: Callable[[], None], host: str = "0.0.0.0",
-                 wait: float = 55):
+                 wait: float = 25):
         self.commands: "queue.Queue[Command]" = queue.Queue()
         self.in_call = threading.Event()
         self.status = "starting"
@@ -97,14 +98,18 @@ class ControlServer:
     def submit(self, action: str, body: dict) -> tuple[int, dict]:
         command = Command(action, body)
         self.commands.put(command)
-        command.done.wait(self._wait)
+        if not command.done.wait(self._wait):
+            command.abandoned = True
         return command.result
 
     def next_command(self) -> Command | None:
-        try:
-            return self.commands.get_nowait()
-        except queue.Empty:
-            return None
+        while True:
+            try:
+                command = self.commands.get_nowait()
+            except queue.Empty:
+                return None
+            if not command.abandoned:
+                return command
 
     def fail_pending(self, status: int = 409, detail: str = "the bot left the call") -> None:
         while (command := self.next_command()) is not None:

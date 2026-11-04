@@ -65,6 +65,22 @@ def test_name_only_entries_get_their_real_id_without_a_second_join():
     assert r.update([E(None, "Asha")], reliable=True, now=2) == []
 
 
+def test_the_id_sent_to_xebit_never_changes():
+    r = pp.Roster("Bot")
+    [(_, person)] = r.update([E(None, "Asha")], reliable=False, now=0)
+    first = pp.webhook_body("join", "b", person)["data"]["data"]["participant"]["id"]
+    r.update([E("p1", "Asha")], reliable=True, now=1)
+    [(kind, gone)] = r.update([], reliable=True, now=1.5) or r.update([], reliable=True, now=12)
+    assert kind == "leave"
+    assert pp.webhook_body("leave", "b", gone)["data"]["data"]["participant"]["id"] == first == "name:Asha"
+
+
+def test_name_suffixes_are_cut():
+    assert pp.clean_name("Asha (Guest)") == "Asha"
+    assert pp.clean_name("Maya Test (You)") == "Maya Test"
+    assert pp.clean_name("Ravi (Presenting)") == "Ravi"
+
+
 def test_names_from_real_tile_texts():
     # evidence/guest-join/20261104-094544-gyz-vvrw-dsv/03-call_ended.html
     assert pp.name_from_text("Akarshit\nAkarshit\ndevices") == "Akarshit"
@@ -159,3 +175,59 @@ def test_a_failing_read_is_survived():
     people = pp.People(page=None, cfg=cfg, rep=rep, webhooks=FakeHooks(), reader=Broken(), clock=lambda: 5.0)
     people.tick(initial=True)
     assert any("read failed" in line for line in rep.lines)
+
+
+# ---- webhooks: retries that are safe for xebit's head count ----
+
+def make_sender(results):
+    import socket as _socket
+    import urllib.error
+
+    from webhooks import WebhookSender
+
+    calls = []
+
+    def post(url, payload):
+        calls.append(payload["event"])
+        outcome = results.pop(0)
+        if outcome == "refused":
+            raise urllib.error.URLError(ConnectionRefusedError("refused"))
+        if outcome == "dns":
+            raise urllib.error.URLError(_socket.gaierror("no such host"))
+        if outcome == "timeout":
+            raise TimeoutError("timed out")
+        if outcome == "500":
+            raise urllib.error.HTTPError("https://x/hook", 500, "boom", {}, None)
+
+    logs = []
+    return WebhookSender(logs.append, backoff=0.01, post=post), calls, logs
+
+
+def body(event, pid):
+    return {"event": f"participant_events.{event}", "data": {"bot": {"id": "b"}, "data": {"participant": {"id": pid, "name": pid}}}}
+
+
+def test_webhook_retries_only_when_it_never_arrived():
+    sender, calls, _ = make_sender(["refused", "dns", "ok"])
+    assert sender.deliver("https://x/hook", body("join", "p1"))
+    assert calls == ["participant_events.join"] * 3
+    sender.close()
+
+
+def test_webhook_timeout_or_error_answer_is_not_retried():
+    for outcome in ("timeout", "500"):
+        sender, calls, logs = make_sender([outcome, "ok"])
+        assert not sender.deliver("https://x/hook?token=SECRET", body("leave", "p1"))
+        assert calls == ["participant_events.leave"]
+        assert all("SECRET" not in line for line in logs)
+        sender.close()
+
+
+def test_no_leave_for_a_person_whose_join_failed():
+    sender, calls, logs = make_sender(["500", "ok", "ok"])
+    assert not sender.deliver("https://x/hook", body("join", "p1"))
+    assert not sender.deliver("https://x/hook", body("leave", "p1"))
+    assert calls == ["participant_events.join"]
+    assert sender.deliver("https://x/hook", body("join", "p2"))
+    assert sender.deliver("https://x/hook", body("leave", "p2"))
+    sender.close()

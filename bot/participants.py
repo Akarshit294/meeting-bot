@@ -25,6 +25,8 @@ PEOPLE_BUTTON = re.compile(r"^(people|show everyone|participants)\b", re.I)
 COUNT_BUTTON = re.compile(r"^\d{1,3}$")
 PANEL_LIST = re.compile(r"participant|people|in (the )?(call|meeting)", re.I)
 YOU = re.compile(r"\(\s*you\s*\)", re.I)
+# Labels Meet may add after a name: "Asha (Guest)", "Asha (Presenting)"...
+NAME_SUFFIX = re.compile(r"\s*\((you|guest|host|meeting host|presenting|presentation|external)\)\s*$", re.I)
 HOST = re.compile(r"meeting host|\bhost\b", re.I)
 ALONE = re.compile(r"no one else is (in this (meeting|call)|here)|you're the only one here|you are the only one here", re.I)
 SELF_TILE = ('[aria-label*="Backgrounds and effects" i], [aria-label^="Reframe" i], [aria-label*="visual effects" i], '
@@ -43,7 +45,10 @@ def iso_now() -> str:
 
 
 def clean_name(text: str) -> str:
-    return YOU.sub("", text).strip()
+    text = YOU.sub("", text).strip()
+    while NAME_SUFFIX.search(text):
+        text = NAME_SUFFIX.sub("", text).strip()
+    return text
 
 
 def name_from_text(text: str) -> str:
@@ -72,6 +77,10 @@ class Person:
     is_host: bool = False
     joined_at: float = 0.0
     missing_since: float | None = None
+    sent_id: str = ""  # the id xebit got in the join; the leave carries the same one
+
+    def __post_init__(self):
+        self.sent_id = self.sent_id or self.id
 
 
 class Roster:
@@ -145,7 +154,7 @@ def webhook_body(event: str, bot_id: str, person: Person) -> dict:
         "data": {
             "bot": {"id": bot_id},
             "data": {
-                "participant": {"id": person.id, "name": person.name, "is_host": person.is_host, "is_bot": False},
+                "participant": {"id": person.sent_id, "name": person.name, "is_host": person.is_host, "is_bot": False},
                 "timestamp": {"absolute": iso_now()},
             },
         },
@@ -220,7 +229,9 @@ class MeetReader:
             items = panel.get_by_role("listitem")
             entries = [self._entry(items.nth(i), "panel") for i in range(min(items.count(), 100))]
             entries = [e for e in entries if e.name or e.id]
-            return Read(entries, reliable=len(entries) > 0, source="panel", shown_count=shown)
+            # Complete only if it has everyone Meet counts (a list still rendering can hold just the bot).
+            reliable = len(entries) > 0 and (shown is None or len(entries) == shown)
+            return Read(entries, reliable=reliable, source="panel", shown_count=shown)
         tiles = self.page.locator("[data-participant-id]")
         entries = []
         for i in range(min(tiles.count(), 60)):
@@ -234,7 +245,8 @@ class MeetReader:
         ids = {e.id for e in entries if e.id}
         alone = False
         try:
-            alone = self.page.get_by_text(ALONE).count() > 0
+            texts = self.page.get_by_text(ALONE)
+            alone = any(texts.nth(i).is_visible() for i in range(min(texts.count(), 3)))
         except Exception:  # noqa: BLE001
             pass
         # Tiles are complete only if Meet's own count says so (or Meet says the bot is alone).

@@ -343,7 +343,8 @@ function end(text) {
   if (shareStream) stopShare("call ended");
   for (const k in sounds) try { sounds[k].stop(); } catch (e) {}
   for (const s of slots) if (s.osc) try { s.osc.stop(); } catch (e) {}
-  $("call").classList.add("hidden"); $("ended").classList.remove("hidden"); $("endtext").textContent = text;
+  // Like real Meet: the call's page is replaced, so its buttons are gone (not just hidden).
+  $("call").remove(); $("ended").classList.remove("hidden"); $("endtext").textContent = text;
   document.body.classList.remove("dark");
 }
 $("leave").onclick = () => end("You left the meeting");

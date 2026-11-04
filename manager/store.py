@@ -56,6 +56,7 @@ class Bot:
     run_dir: str | None = None
     screenshare_url: str | None = None
     options: dict[str, Any] = field(default_factory=dict)
+    leave_requested: bool = False
 
     @property
     def latest(self) -> str:
