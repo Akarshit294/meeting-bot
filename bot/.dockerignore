@@ -1,0 +1,4 @@
+output/
+mouse/
+__pycache__/
+*.pyc

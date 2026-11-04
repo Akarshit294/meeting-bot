@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mouse Recorder</title>
+<style>
+  :root { font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: #1f1f1f; }
+  html, body { margin: 0; height: 100%; background: #e8eaed; }
+  body { display: grid; place-items: center; overflow: hidden; }
+  #arena { position: relative; width: 1280px; height: 633px; background: #fff; border-radius: 12px;
+           box-shadow: 0 1px 3px rgb(0 0 0 / 18%); overflow: hidden; user-select: none; -webkit-user-select: none; }
+  #trails { position: absolute; inset: 0; pointer-events: none; }
+  #hud { position: absolute; left: 16px; top: 12px; color: #5f6368; font-size: 13px; pointer-events: none; }
+  #target { position: absolute; display: none; padding: 0; border: 0; border-radius: 999px; background: #0b57d0;
+            color: #fff; font: 500 14px system-ui, sans-serif; cursor: pointer; }
+  #target.round { background: #3c4043; }
+  #target.outline { background: #fff; color: #0b57d0; box-shadow: inset 0 0 0 1px #747775; }
+  .panel { position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; gap: 14px;
+           padding: 24px; text-align: center; background: #fff; }
+  .panel[hidden] { display: none; }
+  .panel h1 { margin: 0; font-size: 22px; font-weight: 500; }
+  .panel p { margin: 0; max-width: 560px; color: #444746; }
+  .panel button { padding: 10px 28px; border: 0; border-radius: 999px; background: #0b57d0; color: #fff;
+                  font: 500 15px system-ui, sans-serif; cursor: pointer; }
+  .panel button:disabled { background: #c4c7c5; cursor: default; }
+  #size { color: #b3261e; }
+</style>
+</head>
+<body>
+<div id="arena">
+  <svg id="trails" width="1280" height="633"></svg>
+  <div id="hud"></div>
+  <button id="target" type="button"></button>
+  <div class="panel" id="intro">
+    <h1>Record your mouse</h1>
+    <p>Buttons appear one at a time. Click each one the way you normally would: no need to hurry or to be extra careful.</p>
+    <p>Use the mouse or trackpad you normally use, at 100% browser zoom.</p>
+    <p id="size" hidden></p>
+    <button id="start" type="button">Start</button>
+  </div>
+  <div class="panel" id="done" hidden>
+    <h1>Saved</h1>
+    <p id="summary"></p>
+    <button id="again" type="button">Record more</button>
+  </div>
+</div>
+<script>
+const params = new URLSearchParams(location.search);
+const OBSERVE = params.has('observe');
+const TOTAL = OBSERVE ? Infinity : Number(params.get('n') || 40);
+const SHAPES = [
+  {w: 240, h: 56, label: 'Ask to join'},
+  {w: 140, h: 40, label: 'Join now'},
+  {w: 96, h: 40, label: 'Got it'},
+  {w: 180, h: 40, label: 'Other ways to join', cls: 'outline'},
+  {w: 56, h: 56, label: '', cls: 'round'},
+];
+const $ = id => document.getElementById(id);
+const arena = $('arena'), target = $('target'), hud = $('hud'), trails = $('trails');
+let origin = arena.getBoundingClientRect();
+let trial = null;
+let last = null;
+let count = 0, saved = null, session = [];
+window.trials = [];
+window.trialsStarted = 0;
+
+const where = e => [+(e.clientX - origin.left).toFixed(2), +(e.clientY - origin.top).toFixed(2)];
+const since = e => +(e.timeStamp - trial.shownAt).toFixed(2);
+
+function checkSize() {
+  origin = arena.getBoundingClientRect();
+  const small = innerWidth < 1300 || innerHeight < 650;
+  $('size').hidden = !small;
+  $('size').textContent = `Make the window at least 1300 × 650 (it is ${innerWidth} × ${innerHeight} now).`;
+  $('start').disabled = small;
+}
+
+function showTarget(preset) {
+  const s = preset || SHAPES[Math.floor(Math.random() * SHAPES.length)];
+  const x = preset ? preset.x : 24 + Math.random() * (1280 - s.w - 48);
+  const y = preset ? preset.y : 48 + Math.random() * (633 - s.h - 72);
+  Object.assign(target.style, {left: `${x}px`, top: `${y}px`, width: `${s.w}px`, height: `${s.h}px`, display: 'block'});
+  target.className = s.cls || '';
+  target.textContent = s.label || '';
+  trial = {
+    target: {x: +x.toFixed(2), y: +y.toFixed(2), w: s.w, h: s.h}, start: last,
+    samples: [], during: [], after: [], down: null, up: null, misses: 0,
+    shownAt: performance.now(), dpr: devicePixelRatio, userAgent: navigator.userAgent,
+  };
+  window.trialsStarted++;
+}
+
+addEventListener('pointermove', e => {
+  const events = e.getCoalescedEvents ? e.getCoalescedEvents() : [];
+  for (const c of events.length ? events : [e]) {
+    const [x, y] = where(c);
+    last = {x, y};
+    if (!trial || c.timeStamp < trial.shownAt) continue;
+    (trial.up ? trial.after : trial.down ? trial.during : trial.samples).push([since(c), x, y]);
+  }
+});
+
+addEventListener('pointerdown', e => {
+  if (!trial || trial.down || e.button !== 0) return;
+  if (e.target !== target) { trial.misses++; return; }
+  const [x, y] = where(e);
+  trial.down = {t: since(e), x, y};
+  trial.pointerType = e.pointerType;
+});
+
+addEventListener('pointerup', e => {
+  if (!trial || !trial.down || trial.up || e.button !== 0) return;
+  const [x, y] = where(e);
+  trial.up = {t: since(e), x, y};
+  trial.hit = true;
+  target.style.display = 'none';
+  const done = trial;
+  setTimeout(() => finish(done), 400);
+});
+
+function finish(done) {
+  trial = null;
+  delete done.shownAt;
+  count++;
+  session.push(done);
+  if (OBSERVE) {
+    drawTrail(done);
+    window.trials.push(done);
+  } else {
+    fetch('trials', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(done)})
+      .then(r => r.json()).then(r => { saved = r.saved; })
+      .catch(() => { saved = 'none: saving failed, check the terminal'; });
+  }
+  hud.textContent = OBSERVE ? `replay test: ${count} clicks` : `${count} / ${TOTAL}`;
+  if (count >= TOTAL) return setTimeout(showDone, 300);
+  if (!OBSERVE) setTimeout(showTarget, 300 + Math.random() * 600);
+}
+
+function drawTrail(done) {
+  const svg = 'http://www.w3.org/2000/svg';
+  const points = (done.start ? [[0, done.start.x, done.start.y]] : []).concat(done.samples);
+  const line = document.createElementNS(svg, 'polyline');
+  line.setAttribute('points', points.map(p => `${p[1]},${p[2]}`).join(' '));
+  line.setAttribute('style', 'fill:none; stroke:#0b57d0; stroke-opacity:.5; stroke-width:2');
+  const dot = document.createElementNS(svg, 'circle');
+  dot.setAttribute('cx', done.down.x);
+  dot.setAttribute('cy', done.down.y);
+  dot.setAttribute('r', 4);
+  dot.setAttribute('style', 'fill:#b3261e');
+  trails.append(line, dot);
+}
+
+function showDone() {
+  const median = xs => xs.sort((a, b) => a - b)[Math.floor(xs.length / 2)];
+  const moved = session.map(t => {
+    const s = t.start || {x: t.samples[0][1], y: t.samples[0][2]};
+    const onset = t.samples.find(p => Math.hypot(p[1] - s.x, p[2] - s.y) > 3);
+    return t.down.t - (onset ? onset[0] : 0);
+  });
+  const pressed = session.map(t => t.up.t - t.down.t);
+  const misses = session.reduce((n, t) => n + t.misses, 0);
+  $('summary').textContent = `${count} clicks recorded; the library now holds ${saved}. ` +
+    `Typical movement ${Math.round(median(moved))} ms, press ${Math.round(median(pressed))} ms, ${misses} missed clicks.`;
+  $('done').hidden = false;
+}
+
+function begin() {
+  count = 0;
+  session = [];
+  hud.textContent = `0 / ${TOTAL}`;
+  setTimeout(showTarget, 600);
+}
+
+$('start').onclick = () => { $('intro').hidden = true; begin(); };
+$('again').onclick = () => { $('done').hidden = true; begin(); };
+addEventListener('resize', checkSize);
+checkSize();
+if (OBSERVE) $('intro').hidden = true;
+</script>
+</body>
+</html>

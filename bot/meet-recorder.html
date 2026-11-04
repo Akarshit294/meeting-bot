@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Meet Sequence Recorder</title>
+<style>
+  :root { font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: #1f1f1f; }
+  html, body { margin: 0; height: 100%; background: #e8eaed; }
+  body { display: grid; place-items: center; overflow: hidden; }
+  #arena { position: relative; width: 1280px; height: 633px; background: #fff; overflow: hidden;
+           box-shadow: 0 1px 3px rgb(0 0 0 / 18%); user-select: none; -webkit-user-select: none; }
+  .box { position: absolute; box-sizing: border-box; }
+  .box[hidden] { display: none; }
+  #preview { background: #202124; border-radius: 12px; display: grid; place-items: center; color: #e8eaed; font-size: 20px; }
+  .toggle { padding: 0; border: 0; border-radius: 999px; background: #3c4043; display: grid; place-items: center; cursor: pointer; }
+  .toggle svg { width: 24px; height: 24px; fill: #fff; stroke: #fff; }
+  .toggle.off { background: #f9dedc; }
+  .toggle.off svg { fill: #8c1d18; stroke: #8c1d18; }
+  .toggle line { display: none; stroke-width: 2; }
+  .toggle.off line { display: inline; }
+  #heading { font-size: 28px; text-align: center; white-space: nowrap; }
+  #name { border: 1px solid #747775; border-radius: 4px; padding: 0 16px; display: flex; align-items: center; font-size: 16px; }
+  #join { border: 0; border-radius: 999px; background: #0b57d0; color: #fff; font: 500 15px system-ui, sans-serif; cursor: pointer; }
+  #other { border: 1px solid #747775; border-radius: 999px; background: #fff; color: #0b57d0; font: 500 14px system-ui, sans-serif; }
+  #hud { position: absolute; left: 16px; top: 12px; color: #5f6368; font-size: 13px; pointer-events: none; }
+  .panel { position: absolute; inset: 0; background: rgb(255 255 255 / 96%); }
+  .panel[hidden] { display: none; }
+  .panel .text { position: absolute; left: 50%; top: 40px; transform: translateX(-50%); width: 640px; text-align: center; }
+  .panel h1 { margin: 0 0 8px; font-size: 22px; font-weight: 500; }
+  .panel p { margin: 0 0 6px; color: #444746; }
+  #start { position: absolute; padding: 10px 28px; border: 0; border-radius: 999px; background: #0b57d0; color: #fff;
+           font: 500 15px system-ui, sans-serif; cursor: pointer; }
+  #start:disabled { background: #c4c7c5; cursor: default; }
+  #warning { color: #b3261e; }
+</style>
+</head>
+<body>
+<div id="arena">
+  <div class="box" id="preview" hidden>Camera is on</div>
+  <button class="box toggle" id="mic" type="button" hidden aria-label="Microphone">
+    <svg viewBox="0 0 24 24"><path stroke="none" d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z"/><line x1="3" y1="3" x2="21" y2="21"/></svg>
+  </button>
+  <button class="box toggle" id="camera" type="button" hidden aria-label="Camera">
+    <svg viewBox="0 0 24 24"><path stroke="none" d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/><line x1="3" y1="3" x2="21" y2="21"/></svg>
+  </button>
+  <div class="box" id="heading" hidden>What's your name?</div>
+  <div class="box" id="name" hidden></div>
+  <button class="box" id="join" type="button" hidden>Ask to join</button>
+  <button class="box" id="other" type="button" hidden>Other ways to join</button>
+  <div id="hud"></div>
+  <div class="panel" id="panel">
+    <div class="text">
+      <h1 id="title">Record the Meet sequence</h1>
+      <p id="message">Loading the layout…</p>
+      <p id="warning" hidden></p>
+    </div>
+    <button id="start" type="button" hidden>Start</button>
+  </div>
+</div>
+<script>
+const OBSERVE = new URLSearchParams(location.search).has('observe');
+const STEPS = ['mic', 'camera', 'join'];
+const $ = id => document.getElementById(id);
+const arena = $('arena');
+let layout = null;
+let origin = arena.getBoundingClientRect();
+let seq = null;
+let step = 0;
+let last = null;
+let count = 0, saved = null;
+window.sequences = [];
+
+const where = e => [+(e.clientX - origin.left).toFixed(2), +(e.clientY - origin.top).toFixed(2)];
+const since = e => +(e.timeStamp - seq.t0).toFixed(2);
+
+function place(el, box) {
+  Object.assign(el.style, {left: `${box[0]}px`, top: `${box[1]}px`, width: `${box[2]}px`, height: `${box[3]}px`});
+  el.hidden = false;
+}
+
+function init(l) {
+  layout = l;
+  arena.style.width = `${l.viewport[0]}px`;
+  arena.style.height = `${l.viewport[1]}px`;
+  for (const key of ['preview', 'mic', 'camera', 'name', 'join', 'other']) {
+    if (l[key]) place($(key), l[key]);
+  }
+  if (l.name) place($('heading'), [l.name[0] - 100, l.name[1] - 64, l.name[2] + 200, 40]);
+  $('name').textContent = l.bot_name || 'Notetaker';
+  checkSize();
+  reset();
+}
+
+function checkSize() {
+  origin = arena.getBoundingClientRect();
+  if (OBSERVE || !layout) return;
+  const [w, h] = layout.viewport;
+  const small = innerWidth < w + 20 || innerHeight < h + 20;
+  $('warning').hidden = !small;
+  $('warning').textContent = `Make the window at least ${w + 20} × ${h + 20} (it is ${innerWidth} × ${innerHeight} now).`;
+  $('start').disabled = small;
+}
+
+function reset() {
+  step = 0;
+  $('mic').classList.remove('off');
+  $('camera').classList.remove('off');
+  $('join').textContent = 'Ask to join';
+  if (OBSERVE) return;
+  $('message').innerHTML = count
+    ? `Saved (${saved ?? '…'} in the library). Record more for variety, or stop here.`
+    : 'Press <b>Start</b>, then do what the bot does: turn the <b>microphone</b> off, the <b>camera</b> off, ' +
+      'then click <b>Ask to join</b>, at your normal pace. Don\'t click the name box.';
+  const [w, h] = layout.viewport;
+  Object.assign($('start').style, {left: `${80 + Math.random() * (w - 260)}px`, top: `${190 + Math.random() * (h - 260)}px`});
+  $('start').hidden = false;
+  $('panel').hidden = false;
+}
+
+function begin() {
+  $('panel').hidden = true;
+  seq = {layout, start: last, samples: [], clicks: [], misses: 0, t0: performance.now(),
+         dpr: devicePixelRatio, userAgent: navigator.userAgent};
+}
+
+addEventListener('pointermove', e => {
+  const events = e.getCoalescedEvents ? e.getCoalescedEvents() : [];
+  for (const c of events.length ? events : [e]) {
+    const [x, y] = where(c);
+    last = {x, y};
+    if (seq && c.timeStamp >= seq.t0) seq.samples.push([since(c), x, y]);
+  }
+});
+
+addEventListener('pointerdown', e => {
+  if (!seq || e.button !== 0) return;
+  if (step >= STEPS.length || !$(STEPS[step]).contains(e.target) || seq.clicks.length > step) { seq.misses++; return; }
+  const [x, y] = where(e);
+  seq.clicks.push({action: STEPS[step], down: {t: since(e), x, y}});
+});
+
+addEventListener('pointerup', e => {
+  if (!seq || e.button !== 0 || seq.clicks.length !== step + 1) return;
+  const [x, y] = where(e);
+  seq.clicks[step].up = {t: since(e), x, y};
+  const action = STEPS[step++];
+  if (action !== 'join') return $(action).classList.add('off');
+  $('join').textContent = 'Asking to be let in…';
+  setTimeout(finish, 400);
+});
+
+function finish() {
+  const done = seq;
+  seq = null;
+  delete done.t0;
+  count++;
+  $('hud').textContent = `${count} sequence${count === 1 ? '' : 's'}`;
+  if (OBSERVE) {
+    window.sequences.push(done);
+    return reset();
+  }
+  fetch('sequences', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(done)})
+    .then(r => r.json()).then(r => { saved = r.saved; })
+    .catch(() => { saved = 'none: saving failed, check the terminal'; })
+    .finally(() => setTimeout(reset, 300));
+}
+
+$('start').onclick = begin;
+addEventListener('resize', checkSize);
+if (!OBSERVE) {
+  fetch('layout').then(r => r.ok ? r.json() : Promise.reject()).then(init).catch(() => {
+    $('message').innerHTML = 'No Meet layout yet. Capture it first with a dry run (it doesn\'t knock):<br>' +
+      '<code>docker run --rm -v "$PWD/output:/output" -v "$PWD/mouse:/mouse" meet-bot &lt;meet link&gt; --dry-run --save-layout</code>';
+  });
+}
+</script>
+</body>
+</html>
