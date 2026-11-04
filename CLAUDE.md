@@ -57,9 +57,10 @@ Read these before you change anything:
 - **Never end your turn at a checkpoint.** Finishing a task is not a reason to stop and report:
   write the report in `STATUS.md`, push, and start the next task in the same turn. End your turn
   only when every task in `docs/PLAN.md` is done or truly blocked.
-- **If a message says "keep going"** (the owner's Mac sends one every 90 minutes overnight), read
-  `STATUS.md` and `docs/PLAN.md` and continue with the first task that isn't done. If everything is
-  done, reply "ALL DONE" and nothing else.
+- **Nobody will check on you overnight.** No one will answer a question or tell you to continue. If
+  you stop early, the night is lost.
+- **If the owner later says "keep going",** read `STATUS.md` and `docs/PLAN.md` and continue with
+  the first task that isn't done.
 - **One main thread owns the order and git.** Only it commits, merges and pushes.
 - **Subagents (the Agent tool) are welcome for:** looking something up (for example how a Chrome
   flag matches window titles), writing one self-contained piece that no one else is editing (for
