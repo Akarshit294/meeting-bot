@@ -25,7 +25,7 @@ real Meet: that is not allowed from this VM. Start with `MORNING.md`.
 | 7 Screen share | done | docker test: `POST output_media` makes the fake meeting receive bright, non-black frames of our page (a window share); a second POST replaces the page in the same share; `DELETE` stops it |
 | 8 Participants and leaving | done | People panel first (opened once with the human mouse), visible tiles as fallback, 10-second rule, the bot skipped; docker tests: joins for the 2 people there, a join at ~20 s, a leave ~10 s after the removal at 40 s, none for the bot, xebit's head count ends at 2; `leave_call` and removal by the host give `call_ended` then `done` with the camera page closed after `call_ended`; `tests/test_participants.py` |
 | 9 Morning kit | done | `./try.sh` (bash 3.2 + curl), test pages `/test/voice.html` and `/test/screen.html`, a small test receiver in the manager (`/testrx/...`) so `try.sh` shows people, sound frames and pictures without xebit; `MORNING.md`. Every command in `MORNING.md` was run in this VM against the fake meeting |
-| 10 Clean finish | done | whole suite green (at the end of the night: `pytest`: 103, `pytest -m docker`: 23); CPU and memory measured; spec ticked below; one fresh-eyes review, its findings fixed or listed below; merged into `main` |
+| 10 Clean finish | done | whole suite green (at the end of the night: `pytest`: 103, `pytest -m docker`: 24, also from a fresh clone of `main`); CPU and memory measured; spec ticked below; one fresh-eyes review, its findings fixed or listed below; merged into `main` |
 | 11 Camera pictures | done | one JPEG screenshot of Meet's page per tick, each roster person's tile cut out (at most 320 px wide, PNG), about 2 a second while the picture changes and every 5 s when it doesn't; never the bot; `camera/<name>.png` in the run folder; `--no-camera-pictures` turns it off; docker test: each person's frames carry their id, name and tile colour, Asha (camera on) about 2 a second, Ravi (camera off) still sent, none for the bot; `tests/test_pictures.py` |
 | 12 Speaker timeline, per-person audio | done (per-person is EXPERIMENTAL, off by default) | step 1: `speakers.jsonl` in every run (docker-tested in both modes); step 2: `--per-person-audio` hooks Meet's 3 `<audio>` slots from an isolated world and names them by the speaking indicator; docker test: each person's frames carry their own tone; falls back to the mixed stream if nobody can be named. See `docs/per-person-audio.md` |
 
@@ -47,6 +47,8 @@ All in this VM, with the fake Meet page (`tests/testkit/meet.html`, built from t
    the camera page is still open when `call_ended` is reported and closed before `done`; the container goes.
 6. **The manager:** every endpoint, the status rules, 401/404/409/429, the state file, a crashed container.
 7. **`./try.sh` and every command in `MORNING.md`** (except joining real Meet).
+8. **`--join-only`** (the morning fallback): the bot joins with today's fake devices and leaves cleanly.
+9. **A fresh clone of `main`** builds and passes every test (nothing depends on files left in this VM).
 
 ## Only a real Meet call can prove
 

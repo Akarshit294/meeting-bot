@@ -817,11 +817,12 @@ def meet_flags(args: argparse.Namespace | None = None) -> list[str]:
         f"--window-size={width},{height}",
     ]
     if args is None or args.join_only:
-        return ["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream",
-                f"--use-file-for-fake-audio-capture={silent_wav()}", *common]
-    flags = [*common, f"--auto-select-desktop-capture-source={args.share_title}", *ANTI_THROTTLE]
-    if args.meet_url and needs_secure_flag(args.meet_url):
-        # TEST ONLY (the fake meeting is served over plain http on the test network).
+        flags = ["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream",
+                 f"--use-file-for-fake-audio-capture={silent_wav()}", *common]
+    else:
+        flags = [*common, f"--auto-select-desktop-capture-source={args.share_title}", *ANTI_THROTTLE]
+    if args is not None and args.meet_url and needs_secure_flag(args.meet_url):
+        # TEST ONLY (the fake meeting is served over plain http on the test network; never with real Meet).
         flags.append(f"--unsafely-treat-insecure-origin-as-secure={origin(args.meet_url)}")
     return flags
 
