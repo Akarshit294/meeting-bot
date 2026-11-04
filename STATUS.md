@@ -2,10 +2,15 @@
 
 Where the overnight build (2026-11-04) stands.
 
-**In short:** the service is built and every part works against a fake Meet page in this VM: the join
-(the proven code, unchanged), the bot's voice, hearing the call, the sound stream to xebit, joins and
-leaves, the screen share, leaving. Nothing was tried on real Meet (not allowed from this VM). Start
-with `MORNING.md`.
+**In short:** all 12 tasks are done and merged into `main`. Every part works against a fake Meet page in
+this VM:
+- the join (the proven code, unchanged);
+- the bot's voice and its hearing of the call;
+- the sound stream to xebit, joins and leaves, each person's camera picture;
+- the screen share, and leaving.
+
+The experimental one-stream-per-person sound (`--per-person-audio`) also works there. Nothing was tried on
+real Meet: that is not allowed from this VM. Start with `MORNING.md`.
 
 ## Tasks
 
@@ -45,10 +50,6 @@ All in this VM, with the fake Meet page (`tests/testkit/meet.html`, built from t
 
 ## Only a real Meet call can prove
 
-1. **What Meet's real speaking indicator looks like** (no snapshot caught anyone talking). Until it is
-   known, `speakers.jsonl` may stay empty in a real call, and `--per-person-audio` falls back to the mixed
-   stream. `timeline.jsonl` logs each tile's class names (`tile_classes`) to find it; see
-   `docs/per-person-audio.md`.
 1. That Meet still lets the guest in with the service-mode Chrome settings (no fake microphone/camera,
    no fake-UI flag, PulseAudio devices). `MORNING.md` has a way back to the exact proven join (`--join-only`).
 2. That Meet's real "Share screen" button starts presenting our window with no other dialog, and how
@@ -58,8 +59,11 @@ All in this VM, with the fake Meet page (`tests/testkit/meet.html`, built from t
 4. The real People panel: the button (`People 3` in the real page), the list's role and labels, whether
    entries carry `data-participant-id`, and how the bot's own entry is marked. The bot logs every entry's
    attributes once (`timeline.jsonl`, `entry_seen`) so this can be checked.
-5. The sound level and quality of the voice in a real call, and xebit's real camera page in browser B.
-6. CPU and memory with real video (see Measurements).
+5. What Meet's real speaking indicator looks like (no snapshot caught anyone talking). Until it is known,
+   `speakers.jsonl` may stay empty in a real call, and `--per-person-audio` falls back to the mixed stream.
+   `timeline.jsonl` logs each tile's class names (`tile_classes`) to find it; see `docs/per-person-audio.md`.
+6. The sound level and quality of the voice in a real call, and xebit's real camera page in browser B.
+7. CPU and memory with real video (see Measurements).
 
 ## Known gaps
 
