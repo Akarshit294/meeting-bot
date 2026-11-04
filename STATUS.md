@@ -20,9 +20,9 @@ with `MORNING.md`.
 | 7 Screen share | done | docker test: `POST output_media` makes the fake meeting receive bright, non-black frames of our page (a window share); a second POST replaces the page in the same share; `DELETE` stops it |
 | 8 Participants and leaving | done | People panel first (opened once with the human mouse), visible tiles as fallback, 10-second rule, the bot skipped; docker tests: joins for the 2 people there, a join at ~20 s, a leave ~10 s after the removal at 40 s, none for the bot, xebit's head count ends at 2; `leave_call` and removal by the host give `call_ended` then `done` with the camera page closed after `call_ended`; `tests/test_participants.py` |
 | 9 Morning kit | done | `./try.sh` (bash 3.2 + curl), test pages `/test/voice.html` and `/test/screen.html`, a small test receiver in the manager (`/testrx/...`) so `try.sh` shows people, sound frames and pictures without xebit; `MORNING.md`. Every command in `MORNING.md` was run in this VM against the fake meeting |
-| 10 Clean finish | done | whole suite green (`pytest`: 94, `pytest -m docker`: 17); CPU and memory measured; spec ticked below; one fresh-eyes review, its findings fixed or listed below; merged into `main` |
+| 10 Clean finish | done | whole suite green (at the end of the night: `pytest`: 103, `pytest -m docker`: 23); CPU and memory measured; spec ticked below; one fresh-eyes review, its findings fixed or listed below; merged into `main` |
 | 11 Camera pictures | done | one JPEG screenshot of Meet's page per tick, each roster person's tile cut out (at most 320 px wide, PNG), about 2 a second while the picture changes and every 5 s when it doesn't; never the bot; `camera/<name>.png` in the run folder; `--no-camera-pictures` turns it off; docker test: each person's frames carry their id, name and tile colour, Asha (camera on) about 2 a second, Ravi (camera off) still sent, none for the bot; `tests/test_pictures.py` |
-| 12 Speaker timeline, per-person audio | not started | |
+| 12 Speaker timeline, per-person audio | done (per-person is EXPERIMENTAL, off by default) | step 1: `speakers.jsonl` in every run (docker-tested in both modes); step 2: `--per-person-audio` hooks Meet's 3 `<audio>` slots from an isolated world and names them by the speaking indicator; docker test: each person's frames carry their own tone; falls back to the mixed stream if nobody can be named. See `docs/per-person-audio.md` |
 
 ## What was tested here, and how
 
@@ -45,6 +45,10 @@ All in this VM, with the fake Meet page (`tests/testkit/meet.html`, built from t
 
 ## Only a real Meet call can prove
 
+1. **What Meet's real speaking indicator looks like** (no snapshot caught anyone talking). Until it is
+   known, `speakers.jsonl` may stay empty in a real call, and `--per-person-audio` falls back to the mixed
+   stream. `timeline.jsonl` logs each tile's class names (`tile_classes`) to find it; see
+   `docs/per-person-audio.md`.
 1. That Meet still lets the guest in with the service-mode Chrome settings (no fake microphone/camera,
    no fake-UI flag, PulseAudio devices). `MORNING.md` has a way back to the exact proven join (`--join-only`).
 2. That Meet's real "Share screen" button starts presenting our window with no other dialog, and how
@@ -150,6 +154,13 @@ One review agent read only the spec, the xebit code and our code. Fixed:
 
 Left as known gaps: no heartbeat, `MAX_BOTS` vs. the pre-launch check (see Known gaps).
 
+## "If you finish early": a static picture as the bot's camera — not done
+
+Chrome can show a picture as a camera only with `--use-fake-device-for-media-stream` (plus
+`--use-file-for-fake-video-capture`), and that flag also replaces the microphone with a fake one, which
+would cut the agent's voice. The other way, a virtual camera device (v4l2loopback), needs a kernel module
+on the host, which Docker Desktop doesn't offer. So the bot's camera stays off, as the spec says for v1.
+
 ## This VM's build setup (not needed on the Mac)
 
 The VM reaches the internet only through an HTTPS proxy on 127.0.0.1. To build here:
@@ -225,6 +236,12 @@ Read in Chromium's source (tags 120 to 145) and checked in the bot image:
   `caret="initial"` so Playwright adds nothing to the page), not from video elements, so no code runs in
   Meet. Only people in the roster are sent, so the bot's own tile never is. A picture that hasn't changed
   is sent again every 5 s (not never), so xebit's picture of a camera-off person stays fresh.
+- **Per-person audio taps Meet's `<audio>` elements from an isolated world** (DevTools
+  `Page.createIsolatedWorld` + a binding only that world has), after admission only and only with the flag.
+  Nothing runs in Meet's page world. If nobody can be named for 10 s of sound, or no sound comes for 15 s,
+  it goes back to the mixed stream: the agent must always hear the call.
+- **`BOT_ENV_<NAME>` in `.env` reaches every bot as `<NAME>`** (for example `BOT_ENV_SPEAKING_CLASSES`),
+  so a setting found in the morning needs no code change.
 - **`--join-only` does not start PulseAudio**, so Meet sees the same devices as in the proven runs.
 - **After `fatal` the bot writes nothing more, not even `done`** (in `events.jsonl` too), to match the API.
 - **`in_call_recording` is reported once the start steps are done** (people read, audio started, camera

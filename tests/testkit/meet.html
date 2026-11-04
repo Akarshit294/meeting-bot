@@ -139,6 +139,7 @@ const people = [
 ];
 const LATER = { id: "spaces/fakeSpace/devices/203", name: "Meera", color: "#1a73e8", tone: 880, camera: true };
 const SELF_ID = "spaces/fakeSpace/devices/250";
+const EVERYONE = [...people, LATER];
 
 document.addEventListener("click", (e) => { state.clicks.push([Math.round(e.clientX), Math.round(e.clientY), e.isTrusted]); }, true);
 state.presses = [];
@@ -191,28 +192,37 @@ function startSound() {
   o.connect(g); g.connect(ctx.destination); o.start();
   sounds.mix = o;
 }
-// Like real Meet: 3 <audio> elements ("slots"); whoever speaks is put in a slot, and the slot changes.
+// Like real Meet: 3 <audio> elements ("slots") with fixed streams; whoever speaks is played in a free
+// slot, so which person is in which slot changes over time.
 const slots = [];
 function startPerPerson() {
-  for (let i = 0; i < 3; i++) { const a = document.createElement("audio"); a.autoplay = true; document.body.appendChild(a); slots.push({ el: a, who: null }); }
+  for (let i = 0; i < 3; i++) {
+    const a = document.createElement("audio"); a.autoplay = true;
+    const dest = ctx.createMediaStreamDestination();
+    a.srcObject = dest.stream; document.body.appendChild(a); a.play().catch(() => {});
+    slots.push({ el: a, dest, who: null, osc: null });
+  }
 }
 function speak(person, on) {
   const tile = document.querySelector(`.tile[data-participant-id="${person.id}"]`);
   if (tile) tile.classList.toggle("speaking", on);
   const item = document.querySelector(`#plist [data-participant-id="${person.id}"]`);
   if (item) item.dataset.speaking = on ? "true" : "false";
-  if (AUDIO_MODE !== "perperson") return;
-  if (on) {
-    const slot = slots.find((s) => !s.who) || slots[0];
-    const o = ctx.createOscillator(); o.frequency.value = person.tone;
-    const g = ctx.createGain(); g.gain.value = 0.3; const d = ctx.createMediaStreamDestination();
-    o.connect(g); g.connect(d); o.start();
-    slot.el.srcObject = d.stream; slot.who = person.id; slot.osc = o; slot.el.play().catch(() => {});
-  } else {
-    const slot = slots.find((s) => s.who === person.id);
-    if (slot) { slot.osc.stop(); slot.el.srcObject = null; slot.who = null; }
+  if (AUDIO_MODE === "perperson") {
+    if (on) {
+      const slot = slots.find((x) => !x.who) || slots[0];
+      const o = ctx.createOscillator(); o.frequency.value = person.tone;
+      const g = ctx.createGain(); g.gain.value = 0.3;
+      o.connect(g); g.connect(slot.dest); o.start();
+      slot.who = person.id; slot.osc = o;
+    } else {
+      const slot = slots.find((x) => x.who === person.id);
+      if (slot) { slot.osc.stop(); slot.osc.disconnect(); slot.who = null; slot.osc = null; }
+    }
+    state.slots = slots.map((x) => x.who);
   }
   state.speaking = people.filter((p) => document.querySelector(`.tile.speaking[data-participant-id="${p.id}"]`)).map((p) => p.id);
+  state.speak_log = (state.speak_log || []).concat([[Date.now(), person.id, on]]).slice(-60);
 }
 
 // ---- pre-join ----
@@ -288,14 +298,14 @@ function admit() {
     if (state.phase !== "in_call") return;
     const i = people.findIndex((p) => p.name === "Ravi"); if (i >= 0) people.splice(i, 1); render(); log("Ravi left");
   }, LEAVE_AT * 1000);
-  if (AUDIO_MODE === "perperson") cycleSpeakers();
+  cycleSpeakers();
 }
 // Speakers take turns, 3 s each, so the speaking indicator and the <audio> slots change over time.
 function cycleSpeakers() {
   let n = 0;
   const step = () => {
     if (state.phase !== "in_call") return;
-    for (const p of people) speak(p, false);
+    for (const p of EVERYONE) speak(p, false);
     const who = people[n % people.length]; n++;
     if (who) speak(who, true);
     setTimeout(step, 3000);
