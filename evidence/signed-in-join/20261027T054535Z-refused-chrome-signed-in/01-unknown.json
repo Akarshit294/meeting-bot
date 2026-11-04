@@ -1,0 +1,42 @@
+{
+  "state": "unknown",
+  "flags": {
+    "url": "meet.google.com/meet/<code>",
+    "title": "Meet",
+    "heading": "Ready to join? Ready to join?",
+    "nameInput": false,
+    "joinButton": "",
+    "accountButton": false,
+    "signIn": false,
+    "micOff": false,
+    "cameraOff": false,
+    "waiting": "",
+    "joined": "",
+    "leaveCall": false,
+    "shareScreen": false,
+    "captions": false,
+    "chat": false,
+    "people": "",
+    "tiles": 0,
+    "selfName": false,
+    "audio": 0,
+    "end": ""
+  },
+  "items": [
+    "text: <the bot's account>",
+    "text: Switch account",
+    "text: Speaker not found",
+    "text: videocam",
+    "text: Camera not found",
+    "text: Ready to join?",
+    "text: Ask to join",
+    "text: Other ways to join",
+    "text: expand_more",
+    "button: Speaker: Speaker not found | Speaker not found",
+    "button: Camera: Camera not found | videocam Camera not found",
+    "link: Return to home screen",
+    "link: Switch account",
+    "live polite: Speaker not found",
+    "live polite: videocam Camera not found"
+  ]
+}

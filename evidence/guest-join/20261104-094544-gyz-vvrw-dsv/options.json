@@ -1,0 +1,20 @@
+{
+ "url": "https://meet.google.com/gyz-vvrw-dsv",
+ "name": "Notetaker",
+ "waiting_room_timeout": 600,
+ "everyone_left_timeout": 60,
+ "max_duration": 7200,
+ "output": "/output",
+ "trace": false,
+ "dry_run": false,
+ "hold": false,
+ "mouse": "/mouse/recordings.jsonl",
+ "save_layout": false,
+ "knock_delay": 15,
+ "warmup_click": false,
+ "record_session": false,
+ "replay_session": false,
+ "replay_vnc": false,
+ "input": "vnc",
+ "type_name": true
+}

@@ -10,3 +10,5 @@ can switch to it by changing a base URL and a key.
 - Where the work stands: `STATUS.md`
 - How to test it on a Mac: `MORNING.md` (written by the build)
 - The proven guest join it starts from: `bot/` (`bot/JOIN_TEST_RUN.md`)
+- The proven signed-in join, for later: `spikes/signed-in-join/`
+- Every real-Meet test run and its result: `evidence/README.md`

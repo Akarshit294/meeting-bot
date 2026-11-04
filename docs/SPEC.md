@@ -274,8 +274,8 @@ This is what Recall calls "Output Media", and what xebit's camera page expects
    it and try once more.
 4. Stop: click "Stop presenting" (or the equivalent), then close the window.
 
-Labels differ between Meet versions: match several (see `reference/meet_state_signals.ts` and the
-patterns in `bot/meet_bot.py`).
+Labels differ between Meet versions: match several (see `spikes/signed-in-join/src/page.ts`, the
+patterns in `bot/meet_bot.py`, and the real page snapshots in `evidence/`).
 
 ### 5.6 Leave
 

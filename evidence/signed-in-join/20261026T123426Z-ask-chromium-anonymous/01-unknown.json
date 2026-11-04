@@ -1,0 +1,34 @@
+{
+  "state": "unknown",
+  "flags": {
+    "url": "meet.google.com/<code>",
+    "title": "Meet",
+    "heading": "",
+    "nameInput": false,
+    "joinButton": "",
+    "accountButton": false,
+    "signIn": true,
+    "micOff": false,
+    "cameraOff": false,
+    "waiting": "",
+    "leaveCall": false,
+    "shareScreen": false,
+    "captions": false,
+    "chat": false,
+    "people": "",
+    "tiles": 0,
+    "selfName": false,
+    "audio": 0,
+    "end": ""
+  },
+  "items": [
+    "text: Sign in",
+    "text: Getting ready...",
+    "text: You'll be able to join in just a moment",
+    "text: By joining, you agree to the Terms of Service and Privacy Policy. System info will be sent to confirm you're not a bot.",
+    "button: Sign in",
+    "link: Return to home screen",
+    "link: Terms of Service",
+    "link: Privacy Policy"
+  ]
+}

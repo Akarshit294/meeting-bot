@@ -57,7 +57,9 @@ then `done`, and the container gone. Put it in a `docker`-marked test.
 
 ## Task 5 — The fake meeting page (test harness, no Google)
 
-A local page, served inside the test setup, that looks to the bot's code like Meet:
+A local page, served inside the test setup, that looks to the bot's code like Meet. Copy its labels,
+texts and tile attributes from the real page snapshots in `evidence/` (see `evidence/README.md`,
+section 4), not from memory:
 
 - Pre-join: a name input with the same label Meet uses ("Your name"), "Turn off microphone" /
   "Turn off camera" buttons that toggle to "Turn on ...", an "Ask to join" button.

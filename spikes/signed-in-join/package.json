@@ -1,0 +1,25 @@
+{
+  "name": "t0.2-join",
+  "private": true,
+  "description": "T0.2 spike: join a Google Meet call, signed in, and log every state. Throwaway code.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "probe": "node src/probe.ts",
+    "join": "node src/join.ts",
+    "signin": "node src/signin.ts",
+    "leaks": "node src/leaks.ts",
+    "table": "node src/table.ts",
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "playwright": "1.64.1"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "typescript": "7.0.2"
+  }
+}

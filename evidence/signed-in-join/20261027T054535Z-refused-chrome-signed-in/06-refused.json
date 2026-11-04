@@ -1,0 +1,38 @@
+{
+  "state": "refused",
+  "flags": {
+    "url": "meet.google.com/meet/<code>",
+    "title": "Meet - <code>",
+    "heading": "Someone in the call denied your request to join",
+    "nameInput": false,
+    "joinButton": "",
+    "accountButton": false,
+    "signIn": false,
+    "micOff": false,
+    "cameraOff": false,
+    "waiting": "",
+    "joined": "",
+    "leaveCall": false,
+    "shareScreen": false,
+    "captions": false,
+    "chat": false,
+    "people": "",
+    "tiles": 0,
+    "selfName": false,
+    "audio": 0,
+    "end": "refused: denied your request"
+  },
+  "items": [
+    "text: Someone in the call denied your request to join",
+    "text: Return to home screen",
+    "text: Submit feedback",
+    "text: Your meeting is safe",
+    "text: No one can join a meeting unless invited or admitted by the host",
+    "text: Learn more",
+    "text: Someone in the call denied your request to join.",
+    "button: Return to home screen",
+    "button: Submit feedback",
+    "link: Learn more about Google Meet Security & Privacy",
+    "live polite: Someone in the call denied your request to join."
+  ]
+}

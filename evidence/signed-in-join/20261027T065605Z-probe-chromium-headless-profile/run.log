@@ -1,0 +1,8 @@
+2026-10-27T06:56:05.216Z      16 ms  run.start  {"browser":"chromium","headless":true,"profile":".auth/chromium","node":"v24.12.0","playwright":"1.64.1","os":"macOS 26.3.1 (x64)"}
+2026-10-27T06:56:05.217Z      17 ms  profile  {"created":"2026-10-26T12:31:08.479Z"}
+2026-10-27T06:56:05.474Z     274 ms  browser  {"version":"156.0.8078.4"}
+2026-10-27T06:56:05.525Z     325 ms  navigator  {"webdriver":true,"userAgent":"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.8078.4 Safari/537.36","brands":"Not:A-Brand 8.0.0.0, Chromium 156.0.8078.4, HeadlessChrome 156.0.8078.4","platform":"macOS 26.3.1","languages":"en-US"}
+2026-10-27T06:56:05.813Z     613 ms  media  {"tracks":["audio: Fake Default Audio Input","video: fake_device_0"],"devices":["audioinput: Fake Default Audio Input","audioinput: Fake Audio Input 1","audioinput: Fake Audio Input 2","videoinput: fake_device_0","audiooutput: Fake Default Audio Output","audiooutput: Fake Audio Output 1","audiooutput: Fake Audio Output 2"]}
+2026-10-27T06:56:05.820Z     620 ms  chrome-version  {"error":"page.goto: net::ERR_INVALID_URL at chrome://version"}
+2026-10-27T06:56:06.756Z    1556 ms  screenshots  {"ok":true,"lines":["0 screenshot(s) read, 0 line(s) painted over."]}
+2026-10-27T06:56:06.756Z    1556 ms  run.end

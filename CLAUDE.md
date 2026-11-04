@@ -12,8 +12,12 @@ Read these before you change anything:
 3. `STATUS.md` — where the work stands. Keep it current.
 4. `docs/xebit-consumer/` — the xebit-api code that reads what we send. It is the ground truth for
    every payload shape. Never edit it; copy its logic into tests.
-5. `bot/` — a WORKING guest join (5 of 5 runs got in, 2026-11-04). `bot/JOIN_TEST_RUN.md` shows how it
-   was tested.
+5. `evidence/README.md` — what was tried on real Meet and what happened: the guest join (5 of 5,
+   2026-11-04), the signed-in join (3 of 3), what Google blocked, and real page snapshots of every
+   Meet state. Build the fake Meet page from those snapshots.
+6. `bot/` — the WORKING guest join, copied as-is. `bot/JOIN_TEST_RUN.md` shows how it was tested.
+7. `spikes/signed-in-join/` — the WORKING signed-in join (TypeScript), copied as-is. Not used in v1.
+   Its `src/page.ts` is the best Meet state reader we have.
 
 ## Rules
 

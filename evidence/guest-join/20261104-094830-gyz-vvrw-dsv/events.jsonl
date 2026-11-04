@@ -1,0 +1,5 @@
+{"ts": "2026-11-04T09:48:33+00:00", "code": "joining_call", "sub_code": null, "message": "https://meet.google.com/gyz-vvrw-dsv as 'Notetaker'"}
+{"ts": "2026-11-04T09:49:15+00:00", "code": "in_waiting_room", "sub_code": null, "message": ""}
+{"ts": "2026-11-04T09:49:16+00:00", "code": "in_call_not_recording", "sub_code": null, "message": ""}
+{"ts": "2026-11-04T09:49:25+00:00", "code": "call_ended", "sub_code": "bot_received_leave_call", "message": "stop requested (SIGINT/SIGTERM)"}
+{"ts": "2026-11-04T09:49:25+00:00", "code": "done", "sub_code": null, "message": "artifacts in /output/20261104-094830-gyz-vvrw-dsv"}

@@ -1,0 +1,37 @@
+{
+  "state": "left",
+  "flags": {
+    "url": "meet.google.com/<code>",
+    "title": "Meet - <code>",
+    "heading": "You left the meeting",
+    "nameInput": false,
+    "joinButton": "",
+    "accountButton": false,
+    "signIn": false,
+    "micOff": false,
+    "cameraOff": false,
+    "waiting": "",
+    "leaveCall": false,
+    "shareScreen": false,
+    "captions": false,
+    "chat": false,
+    "people": "",
+    "tiles": 0,
+    "selfName": false,
+    "audio": 3,
+    "end": "left: You left the meeting"
+  },
+  "items": [
+    "text: You left the meeting",
+    "text: Rejoin",
+    "text: Return to home screen",
+    "text: Submit feedback",
+    "text: Your meeting is safe",
+    "text: No one can join a meeting unless invited or admitted by the host",
+    "text: Learn more",
+    "button: Rejoin",
+    "button: Return to home screen",
+    "button: Submit feedback",
+    "link: Learn more about Google Meet Security & Privacy"
+  ]
+}
