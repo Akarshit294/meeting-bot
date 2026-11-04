@@ -1,5 +1,10 @@
 # RUN
 
+> **Note (overnight build, 2026-11-04):** this is the record of the proven join test. Since then the bot's
+> default is the service mode (voice, sound, screen share: see `MORNING.md`). To run exactly this test,
+> unchanged, add `--join-only` to the `docker run` command below (and the image is now built by
+> `docker compose build` as `meeting-bot:latest`).
+
 Test: the bot joins a Google Meet call as a signed-out guest. Five runs, one row per run in the table below.
 
 ## Before you start
