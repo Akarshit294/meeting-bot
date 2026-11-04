@@ -431,7 +431,7 @@ class InCall:
 
             global before_click
             self.pages = pages.PageBrowser(self.p, rep.log, insecure=[cfg.camera_url], share_title=self.args.share_title)
-            before_click = self.pages.keep_below
+            before_click = self.pages.before_click
             if not self.pages.open_camera(cfg.camera_url):
                 return ("fatal", "bot_errored", "the camera page could not be opened")
             if turn_on_mic(page, rep):
@@ -509,7 +509,7 @@ class InCall:
         if self.pages is None:
             global before_click
             self.pages = pages.PageBrowser(self.p, rep.log, insecure=[url], share_title=self.args.share_title)
-            before_click = self.pages.keep_below
+            before_click = self.pages.before_click
         replacing = self.sharing_url is not None and is_presenting(page)
         if not self.pages.open_screen(url):
             return False, "the screen page could not be opened"
@@ -536,11 +536,15 @@ class InCall:
                 pass
             deadline = time.monotonic() + SHARE_CONFIRM
             while time.monotonic() < deadline:
+                self.pages.keep_below(force=True)  # Chrome raises the window it starts capturing
                 if is_presenting(page):
                     self.sharing_url = url
                     self.not_presenting_since = None
                     rep.log(f"screen share started: Meet shows the bot presenting ({safe_url(url)})")
                     rep.snapshot(page, f"share-started-{int(time.time())}")
+                    page.wait_for_timeout(1_000)
+                    self.pages.keep_below(force=True)
+                    self.grab_screen("share-started")
                     return True, "presenting"
                 dismiss_popups(page)
                 page.wait_for_timeout(500)
@@ -562,11 +566,23 @@ class InCall:
                 page.wait_for_timeout(500)
             rep.log("screen share stopped" if not is_presenting(page) else "warning: Meet still shows the bot presenting")
             rep.snapshot(page, f"share-stopped-{int(time.time())}")
+            self.grab_screen("share-stopped")
         if self.pages:
             self.pages.close_screen()
         if self.sharing_url:
             rep.event("screenshare", action="stop")
         self.sharing_url = None
+
+    def grab_screen(self, name: str) -> None:
+        """The whole display (what the live view shows), and its windows: shows whether anything of
+        Chrome's (like a "sharing" bar) covers Meet's buttons."""
+        try:
+            import xwin
+
+            (self.rep.run_dir / f"screen-{name}-{int(time.time())}.png").write_bytes(xwin.grab_screen())
+            self.rep.event("windows", at=name, windows=xwin.describe())
+        except Exception as exc:  # noqa: BLE001
+            self.rep.log(f"screen grab failed: {type(exc).__name__}: {exc}")
 
     def _watch_share(self) -> None:
         if is_presenting(self.page):

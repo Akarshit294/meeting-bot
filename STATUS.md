@@ -12,7 +12,7 @@ Where the overnight build (2026-11-04) stands. Newest first inside each section.
 | 4 Manager runs real containers | done | Docker SDK runner, compose; `tests/test_docker_manager.py` (create, `joining_call`, leave, `call_ended`, `done`, container gone; a killed container gets `fatal`) |
 | 5 Fake meeting page | done | `tests/testkit/` (fake Meet from the evidence snapshots, receiver, test camera and screen pages); `tests/test_docker_meeting.py`: the bot joins through the real join code; joins for Asha and Ravi, none for the bot |
 | 6 Sound, both ways | done | PulseAudio in the bot; docker test: the fake meeting hears ~1000 Hz from the camera page, the camera page hears 440 Hz, xebit's `_decode_recall` reads 200 ms 16 kHz frames peaking at 440 Hz with no 1000 Hz; `tests/test_audio.py` (format, pings, reconnect, backoff) |
-| 7 Screen share | not started | |
+| 7 Screen share | done | docker test: `POST output_media` makes the fake meeting receive bright, non-black frames of our page (a window share); a second POST replaces the page in the same share; `DELETE` stops it |
 | 8 Participants and leaving | not started | |
 | 9 Morning kit | not started | |
 | 10 Clean finish | not started | |
@@ -26,6 +26,27 @@ The VM reaches the internet only through an HTTPS proxy on 127.0.0.1. To build h
 and the proxy CA bundle copied to `/tmp/proxyca/agent-proxy-ca.crt`. The Dockerfiles have a `net-proxy`
 stage that only these settings select; on the Mac the default stage is used and none of this is baked in.
 The VM's `.env` also sets `TEST_MEET_URL` so no bot here can ever open real Meet.
+
+## How Chrome picks the shared window (`--auto-select-desktop-capture-source`)
+
+Read in Chromium's source (tags 120 to 145) and checked in the bot image:
+
+1. The flag is read in `chrome/browser/ui/views/desktop_capture/desktop_media_list_controller.cc`
+   (`ShouldAutoAccept`): `source.name.find(<flag value>) != npos`. So it is a **case-sensitive substring**
+   match, the first matching source wins, and the picker opens and accepts by itself.
+2. A window's name is its X title. A Chrome window's title is `<page title> - Google Chrome` (or
+   `- Chromium`, `- Google Chrome for Testing`; our page browser shows `xbot screen share - Google Chrome
+   for Testing`). An `--app=` window has no suffix.
+3. It also applies to screens ("Entire screen") and tabs (plain page title), so the value must not
+   appear in any tab title of the Meet browser. Ours is `xbot screen share`.
+4. `--use-fake-ui-for-media-stream` skips the picker altogether (it captures screen 0, or a test pattern
+   with the fake-device flag), so service mode drops it.
+5. On Linux X11 the picker lists only windows with `WM_STATE = NormalState`, which a window manager sets.
+   The bot sets it on its own window. A covered window still captures (X Composite); a window that is
+   partly off-screen does not, so ours stays on the screen, under Meet.
+6. When a share starts, Chrome raises the captured window and shows its own "<site> is sharing a window"
+   bar at the bottom centre, right over Meet's control bar. The bot pushes both under Meet's window again
+   (right away, every 2 s, and before every click). See `screen-share-started-*.png` in a run folder.
 
 ## How to run the tests
 

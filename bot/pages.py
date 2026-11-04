@@ -23,6 +23,9 @@ import xwin
 from botconfig import needs_secure_flag, origin, safe_url
 
 PAGE_CLASS = "xbot-pages"
+# Chrome's own bar while sharing ("<site> is sharing a window. Stop sharing / Hide"): it sits at the
+# bottom centre of the screen, on top, right over Meet's control bar.
+SHARING_BAR = (" is sharing a window", " is sharing your screen", " is sharing a tab", " is sharing this tab")
 KEEP_TITLE_JS = """title => {
     const pin = () => { if (document.title !== title) document.title = title; };
     pin();
@@ -112,15 +115,19 @@ class PageBrowser:
             self.log("screen page closed")
 
     def keep_below(self, force: bool = False) -> None:
-        """Put every window of this browser under Meet's window (at most every 2 s unless forced)."""
+        """Put every window of this browser, and Chrome's sharing bar, under Meet's window (at most every
+        2 s unless forced). Needed again after a share starts: Chrome raises the captured window."""
         now = time.monotonic()
         if not force and now - self._last_keep < 2:
             return
         self._last_keep = now
         try:
-            xwin.lower_class(PAGE_CLASS)
+            xwin.lower(PAGE_CLASS, SHARING_BAR)
         except Exception as exc:  # noqa: BLE001 - X trouble must not break a click
             self.log(f"could not lower our windows: {exc}")
+
+    def before_click(self) -> None:
+        self.keep_below(force=True)
 
     def tick(self) -> None:
         self.keep_below()

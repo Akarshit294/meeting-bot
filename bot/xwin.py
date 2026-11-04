@@ -75,12 +75,13 @@ def mark_shareable(title_part: str) -> bool:
     return found
 
 
-def lower_class(name: str) -> int:
-    """Put every top-level window whose WM_CLASS names `name` at the bottom of the stack."""
+def lower(class_name: str, title_parts: tuple[str, ...] = ()) -> int:
+    """Put at the bottom of the stack every top-level window whose WM_CLASS names `class_name`, or whose
+    title contains one of `title_parts` (Chrome's own "... is sharing a window." bar)."""
     d = _d()
     lowered = 0
     for w in top_windows():
-        if name in wm_class(w):
+        if class_name in wm_class(w) or (title_parts and any(part in title(w) for part in title_parts)):
             w.configure(stack_mode=X.Below)
             lowered += 1
     d.sync()

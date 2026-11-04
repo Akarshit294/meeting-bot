@@ -81,6 +81,10 @@ def run():
         seen["share_took"] = time.time() - t0
         time.sleep(5)
         seen["share_on"] = kit("/api/state")["share"]
+        seen["share_replace"] = request("POST", f"/api/v1/bot/{bot_id}/output_media/",
+                                        {"screenshare": {"kind": "webpage", "config": {"url": SCREEN + "&bg=blue"}}}, key=key)
+        time.sleep(4)
+        seen["share_replaced"] = kit("/api/state")["share"]
         seen["share_stop"] = request("DELETE", f"/api/v1/bot/{bot_id}/output_media/", {"screenshare": True}, key=key)
         time.sleep(3)
         seen["share_off"] = kit("/api/state")["share"]
@@ -189,6 +193,13 @@ def test_screen_share_starts_and_shows_our_page(run):
     assert share["surface"] == "window", share
     assert share["frames"] > 20, share
     assert share["lit"] > 0.9 and share["mean"] > 100, f"frames are not black and show our bright page: {share}"
+
+
+def test_screen_share_replaces_the_page(run):
+    assert run["share_replace"][0] == 200
+    before, after = run["share_on"], run["share_replaced"]
+    assert after["active"] is True and after["started"] == before["started"], "the same share keeps running"
+    assert after["lit"] > 0.9 and abs(after["mean"] - before["mean"]) > 20, f"it shows the new page: {before} -> {after}"
 
 
 def test_screen_share_stops(run):
