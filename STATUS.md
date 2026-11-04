@@ -21,7 +21,7 @@ with `MORNING.md`.
 | 8 Participants and leaving | done | People panel first (opened once with the human mouse), visible tiles as fallback, 10-second rule, the bot skipped; docker tests: joins for the 2 people there, a join at ~20 s, a leave ~10 s after the removal at 40 s, none for the bot, xebit's head count ends at 2; `leave_call` and removal by the host give `call_ended` then `done` with the camera page closed after `call_ended`; `tests/test_participants.py` |
 | 9 Morning kit | done | `./try.sh` (bash 3.2 + curl), test pages `/test/voice.html` and `/test/screen.html`, a small test receiver in the manager (`/testrx/...`) so `try.sh` shows people, sound frames and pictures without xebit; `MORNING.md`. Every command in `MORNING.md` was run in this VM against the fake meeting |
 | 10 Clean finish | done | whole suite green (`pytest`: 94, `pytest -m docker`: 17); CPU and memory measured; spec ticked below; one fresh-eyes review, its findings fixed or listed below; merged into `main` |
-| 11 Camera pictures | not started | |
+| 11 Camera pictures | done | one JPEG screenshot of Meet's page per tick, each roster person's tile cut out (at most 320 px wide, PNG), about 2 a second while the picture changes and every 5 s when it doesn't; never the bot; `camera/<name>.png` in the run folder; `--no-camera-pictures` turns it off; docker test: each person's frames carry their id, name and tile colour, Asha (camera on) about 2 a second, Ravi (camera off) still sent, none for the bot; `tests/test_pictures.py` |
 | 12 Speaker timeline, per-person audio | not started | |
 
 ## What was tested here, and how
@@ -91,7 +91,7 @@ All in this VM, with the fake Meet page (`tests/testkit/meet.html`, built from t
 | 3 URLs used as given; failures logged host and path only; webhook retries | done; differently: retried only when the connection never happened (a retry after a timeout or a 5xx could make xebit count twice) |
 | 3.1 join/leave webhooks, joins for people already there, 10 s rule, never the bot, stable ids | done |
 | 3.2 audio: 200 ms 16 kHz frames, one `meeting-mix` participant, start at admission, reconnect 1/2/4/8 s, stop at leave, no bot voice | done |
-| 3.3 camera pictures | task 11 |
+| 3.3 camera pictures | done (unchanged pictures are re-sent every 5 s rather than never, so xebit's picture never goes stale) |
 | 3.4 no transcript, no status webhook | done |
 | 4.1 camera page: after admission until leaving; its sound is the mic; it hears the call; camera off; autoplay; not throttled | done; the microphone is turned on just BEFORE the page loads, so the agent's first words are not lost |
 | 4.2 screen page 1280x720 until DELETE or leaving | done (1279x719, see Known gaps) |
@@ -114,6 +114,15 @@ Measured with `docker stats` every 3 s (100% = one CPU core).
 | Joining (pre-join page) | 20-48% | about 380 MiB |
 | In the call (voice, hearing, sound stream, people) | 37% on average, 46% at most | about 610 MiB |
 | While sharing the screen | 71% on average, 74% at most | about 960 MiB |
+
+With camera pictures on (task 11; measured again with the same setup):
+
+| Moment | CPU, pictures off | CPU, pictures on | Memory |
+| --- | --- | --- | --- |
+| In the call | 38% on average, 47% at most | 54% on average, 57% at most | about 600 MiB |
+| While sharing the screen | 73% on average, 80% at most | 87% on average, 92% at most | about 850 MiB |
+
+One pictures tick (screenshot, cut, encode, send for 3 people) takes about 105 ms on the bot's main thread.
 
 The budget is 2.5 cores and 5 GB. The fake meeting sends no video; a real call decodes the others'
 video and encodes the shared window, so expect more CPU there (check with `docker stats` in the morning).
@@ -212,6 +221,10 @@ Read in Chromium's source (tags 120 to 145) and checked in the bot image:
 - **Webhooks are retried only when the connection never happened** (refused, unknown host), never after
   a timeout or an error answer, and a leave is not sent for a person whose join failed. Reason: xebit
   counts before steps that can fail, so a retried leave could end a live demo.
+- **Camera pictures are cut from a screenshot of Meet's page** (Playwright, through the DevTools protocol;
+  `caret="initial"` so Playwright adds nothing to the page), not from video elements, so no code runs in
+  Meet. Only people in the roster are sent, so the bot's own tile never is. A picture that hasn't changed
+  is sent again every 5 s (not never), so xebit's picture of a camera-off person stays fresh.
 - **`--join-only` does not start PulseAudio**, so Meet sees the same devices as in the proven runs.
 - **After `fatal` the bot writes nothing more, not even `done`** (in `events.jsonl` too), to match the API.
 - **`in_call_recording` is reported once the start steps are done** (people read, audio started, camera
