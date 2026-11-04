@@ -9,6 +9,7 @@ testpaths = ["tests"]
 pythonpath = [".", "bot"]
 # Docker tests are slow and need the images: run them on their own with `pytest -m docker`.
 addopts = "-m 'not docker' -p no:cacheprovider"
+filterwarnings = ["ignore::DeprecationWarning:fastapi.testclient", "ignore:Using `httpx`"]
 markers = [
     "docker: needs Docker and the built images (slow). Run with: pytest -m docker",
 ]
