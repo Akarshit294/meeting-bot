@@ -1,94 +1,135 @@
-# Per-person audio (experimental) and the speaker timeline
+# Who spoke when, and each person's sound
 
-Built overnight on 2026-11-04 (docs/PLAN.md task 12). Tested only against the fake Meet page.
+Built on 2026-11-04 (task 12) and reworked on 2026-11-05 (round 2, task R3) after the first real Meet test
+showed that Meet's speaking indicator was not recognised. Tested only against the fake Meet page.
 
-## 1. Who spoke when: `speakers.jsonl` (always on)
+## 1. Captions: who says what (`captions.jsonl`)
 
-- About 5 times a second the bot asks Meet, with one locator query, which tiles or People-panel entries
-  say "this person is speaking". Each change becomes one line in the run folder's `speakers.jsonl`:
-  `{"t": "...", "id": "<same id as the join webhook>", "name": "Asha", "event": "started" | "stopped"}`.
-- The signals it looks for (from `bot/speakers.py`): `data-speaking="true"`, an `aria-label` that says
-  "speaking", or a class name containing one of `SPEAKING_CLASSES` (an environment variable of the bot,
-  default `speaking`).
-- **Not known yet: what Meet's real speaking indicator looks like.** None of the real snapshots in
-  `evidence/` caught someone talking. So every 10 s the bot also writes the class names of each tile's
-  direct children to `timeline.jsonl` (`tile_classes`), whenever they change. In the morning, talk for a
-  few seconds, stop, talk again, then compare those lines with when you talked: the class that comes and
-  goes with your voice is the indicator. Give it to the bots (section 4) and the timeline works.
+After admission (after the microphone and the camera page) the bot turns Meet's captions on with the
+human mouse. Only the bot sees them; nobody else in the call does. Two versions of the button exist right
+now (public bot code, October 2026):
 
-## 2. One stream per person (`--per-person-audio`, off by default)
+- **A:** a "Turn on captions" button (icon `closed_caption_off`). Once on, it says "Turn off captions".
+- **B:** a "Captions and translation" button (icon `translate_cc`, the one in the first real test's
+  screenshots). It opens a small menu with a "Turn on captions" switch. The bot clicks the switch, then
+  presses Escape to close the menu.
 
-### Why it is hard
+If neither works, the bot presses `c` (Meet's own shortcut). If that fails too, it writes
+`warning: captions could not be turned on` in `bot.log` and carries on.
 
-Meet does not send one stream per person. Every real in-call snapshot shows exactly 3 `<audio>` elements:
-Meet sends the loudest speakers in 3 "slots", and which person is in which slot changes. Naming a slot
-needs either code in Meet's page (which can get the guest join blocked) or matching the slot to the person
-Meet shows as speaking.
+The captions area is a region named "Captions". Each speaker turn is a block: the speaker's picture (an
+`img` whose `alt` is the name), the name, then the text, which Meet rewrites while the person talks. The
+bot's own voice is shown as "You" and is skipped. The bot reads the area about 3 times a second, through
+locators only: one `inner_text` of the area and the pictures' `alt` texts. A line that is a speaker's name
+starts a block; the lines after it are the text.
 
-### What the bot does (option 1 of the plan: an isolated world)
+`captions.jsonl`: one line each time a block's text changes,
+`{"t", "name", "id", "text", "changing": true}`, and one more when it hasn't changed for 1.5 s,
+`{"changing": false}`. `id` is the participant id of the join webhook (null if the name matches nobody).
+What was already on screen at the first read is written once as `changing: false`.
 
-After admission only, and only with the flag:
+## 2. Who spoke when (`speakers.jsonl`)
 
-1. Through the DevTools protocol (`Page.createIsolatedWorld`) the bot makes an **isolated world** in Meet's
-   tab. Code there shares the page's elements but not its JavaScript: Meet's scripts cannot see it, and
-   nothing runs in Meet's page world. A DevTools binding (`Runtime.addBinding`, given only to that world)
-   carries data back to the bot.
-2. In that world, each `<audio>` element's stream (`srcObject`) goes into the bot's own 16 kHz AudioContext.
-   Every 200 ms, each slot's sound (16-bit PCM) and its level go to the bot. New elements and new streams
-   are picked up every second.
-3. The bot names each slot with the speaker timeline (`SlotNamer` in `bot/per_person_audio.py`):
-   - a slot that is the only one with sound while exactly one person is shown speaking belongs to them;
-   - it stays theirs while it has sound and they are still shown speaking;
-   - a new slot with sound goes to the one speaking person that no other slot has;
-   - when it is not clear (two new slots, two people), nothing is guessed.
-4. Up to 1 s of a slot's sound waits for its name (the indicator comes a little after the sound), then
-   goes to that person. Sound that can't be named is not sent.
-5. Frames are exactly like the mixed stream's (`docs/SPEC.md` 3.2), with the person's id and name: the
-   same ids as the join/leave webhooks. No `meeting-mix` stream is sent while this works.
-6. **Safety net:** if 10 s of sound arrive and nobody can be named (the indicator isn't read), or nothing
-   arrives from Meet's `<audio>` elements for 15 s, the bot goes back to the mixed stream for the rest of
-   the call and says so in `bot.log` and `timeline.jsonl` (`fallback_to_mix`). The agent always hears the call.
+Two sources, merged:
 
-### What works (fake meeting)
+1. **Captions (the main one):** a person starts speaking when their caption block starts or grows, and
+   stops about 1 s after it stops changing.
+2. **The speaking indicator** on the tiles or People-panel entries, about 5 times a second, through locators
+   only: `data-speaking="true"`, an `aria-label` that says "speaking", or a class name from
+   `SPEAKING_CLASSES` (section 5). Real Meet's indicator is still not known for sure, so this source may
+   stay silent there. Every 10 s each tile's class names go to `timeline.jsonl` (`tile_classes`).
 
-`tests/test_docker_per_person.py`: the fake meeting plays Asha (440 Hz), Ravi (660 Hz) and Meera (880 Hz)
-through 3 fixed `<audio>` slots, taking 3-second turns, with a speaking indicator. The frames for each
-person carry that person's tone (checked with xebit's decoder and an FFT), with the same ids as the join
-webhooks. In one run: 127 frames named (Asha 40, Ravi 57, Meera 30), 33 with sound not named (mostly
-when the fake page redraws its tiles and the indicator blinks off). The mixed default still passes all
-its tests.
+Lines: `{"t", "id", "name", "event": "started" | "stopped", "source": "captions" | "indicator" | "both"}`.
+
+## 3. Each person's sound (`audio/<name>.wav`, and `--per-person-audio`)
+
+Meet does not send one stream per person: it plays the loudest speakers through 3 `<audio>` elements
+("slots"), and which person is in which slot changes. Every real in-call snapshot shows exactly 3.
+
+What the bot does (all after admission, nothing in Meet's page world):
+
+1. It hears each slot separately, from an **isolated world** in Meet's tab (`bot/taps.py`): DevTools
+   `Page.createIsolatedWorld` makes a world that shares the page's elements but not its JavaScript; each
+   `<audio>` element's stream goes into that world's own 16 kHz AudioContext; 200 ms pieces come back
+   through a DevTools binding only that world has. With `--save-media` they are also saved raw as
+   `audio/slot-1.wav` ... `slot-3.wav`.
+2. `bot/voices.py` gives each piece to a person, 2.5 s later (captions come after the words):
+   - the people talking around that moment are those whose captions changed from 0.2 s before to 1.5 s
+     after it (or whom the indicator showed speaking);
+   - a slot with sound keeps its person while that person is still talking;
+   - a slot that goes quiet for 0.3 s forgets its person (the next voice in it may be someone else);
+   - a slot with sound and no person goes to a talking person no other sounding slot has: first one whose
+     new caption block starts about then (a new speaker), then the one whose caption grows most. When
+     several slots start together, the loudest goes first. When it is a tie, nobody is guessed.
+3. With `--save-media`: `audio/<name>.wav` per person, and `audio/unknown.wav` for sound nobody could be
+   given. All files start at the same moment and have silence where that person said nothing, so they line
+   up with `audio/mixed.wav` and `screen.mp4`.
+4. With `--per-person-audio`: the same named pieces go to xebit as one stream per person (same frame format
+   as the mixed stream, `docs/SPEC.md` 3.2, with the person's id and name, the same ids as the join/leave
+   webhooks), with the time the sound was heard. Sound nobody can be given is not sent. If 10 s of sound
+   can't be given to anyone, or no sound comes from the slots for 15 s, the bot goes back to the mixed
+   stream for the rest of the call (`bot.log`: `switching to the mixed stream`).
+
+### How well it works (fake meeting)
+
+`tests/test_docker_round2.py`: the fake meeting plays Asha (440 Hz), Ravi (660 Hz) and Meera (880 Hz)
+through 3 slots, taking 3-second turns with short pauses, and shows captions about 0.5 s behind the voice
+(the "Captions and translation" version, no speaking indicator, so only captions say who talks). In one
+run: 176 pieces given to a person, 36 to nobody; of the loud pieces in each person's file, Asha 69 of 70
+were her tone, Ravi 51 of 51, Meera 56 of 58. `speakers.jsonl` found every turn's start and end.
+
+### Where it fails, or may fail in a real call
+
+1. **The first moments of each turn often go to `unknown`:** until the new speaker's first caption shows,
+   nobody can be named (a few hundred milliseconds per turn).
+2. **Meet's caption lag is not known.** The windows above assume captions come within about 1.5 s of the
+   words. If Meet is slower, more sound goes to `unknown`; if a speaker's last corrections come long after
+   they stop, the next speaker's first words in the same slot may go to them.
+3. **Two people at once:** each gets a slot, and the naming works when one of them was already talking. If
+   both start at the same moment, the loudest slot goes to the one whose caption grows most; a tie gives
+   `unknown`.
+4. **Back-to-back speakers with no pause in the same slot:** the slot stays with the first speaker until
+   their captions stop changing (about the caption lag).
+5. **Captions only name people in the language they are set to** (English by default for the bot). Speech
+   Meet can't caption (another language, noise, music) gives no caption, so its sound goes to `unknown`.
+6. **Names:** captions show display names. Two people with the same name can't be told apart. A name that
+   is not in the People list yet gets `id: null` in `captions.jsonl` and `speakers.jsonl`, and its sound
+   goes to a file with that name.
+7. **The bot's own long actions** (starting a screen share, opening the People panel) used to pause the
+   reading; now the bot keeps reading while it waits and while the mouse moves, but a page that takes long
+   to load in the share window can still delay it by a second or two.
 
 ### Option 2 (not built): code in Meet's page world
 
 The plan says: describe, don't build. It would be:
 
-- after admission, inject a script into Meet's page world (for example `Page.addScriptToEvaluateOnNewDocument`
-  is out, since it runs before admission; it would be `Runtime.evaluate` in the main world) that wraps
-  `RTCPeerConnection` events (`track`) or reads Meet's own participant-to-stream map, to know which remote
-  track (and so which slot) carries which participant;
-- then record each track directly, with no guessing from the speaking indicator.
+- after admission, inject a script into Meet's page world (`Runtime.evaluate` in the main world) that wraps
+  `RTCPeerConnection` events (`track`) or reads Meet's own participant-to-stream map (each person's audio
+  carries a per-sender id that only page JavaScript can read), to know which slot carries which person;
+- then record each track directly, with no guessing.
 
 Risks: Meet can see changed built-ins and any timing or object it doesn't expect; that is exactly what
 can get a guest refused or the call degraded, and Google changes Meet's internals often, so it would
 break without warning. Before admission it would be far too risky; after admission it is still a risk
-for a live demo. Option 1 does not need it.
+for a live demo. Captions do not need it.
 
-## 3. What to check in a real call
+## 4. What to check in a real call
 
-1. Run `./try.sh --per-person-audio <meet link>` and join from two devices (you and a phone).
-2. Talk from one device, then the other. `try.sh` should show `sound sent: N frames (You 40, Phone 25)`:
-   one count per person, growing for whoever talks.
-3. In the run folder:
-   - `bot.log`: `per-person audio ... hooked`, later `frames sent ...; N frames with sound could not be named`.
-     If it says `switching to the mixed stream`, the speaking indicator wasn't read (see section 1).
-   - `speakers.jsonl`: `started`/`stopped` lines with your names when you talk.
-   - `timeline.jsonl`: `tile_classes` lines, to find the real indicator if `speakers.jsonl` stays empty.
-4. Without the flag, the mixed stream (`meeting-mix`) must work as before.
+Use the Round 2 test in `MORNING.md`. In short:
 
-## 4. Setting the indicator's class name
+1. `./try.sh <meet link>`, two people (you and a phone) talking in turns, then a little at the same time.
+2. `bot.log`: `captions: turned on (...)`. If it says `could not be turned on`, send `dom/` and the
+   screenshots.
+3. `captions.jsonl`: your words, under your names. `speakers.jsonl`: `started`/`stopped` at your turns.
+4. `audio/<your name>.wav` and `audio/<phone name>.wav`: each should hold only that person's voice;
+   `audio/unknown.wav` should be short bits. Listen to them next to `audio/mixed.wav`.
+5. `./try.sh --per-person-audio <meet link>`: `try.sh` shows `sound sent: ... (You 40, Phone 25)`.
+6. Without the flag, the mixed stream (`meeting-mix`) must work as before.
 
-If the morning test finds the class (say `abc123`), add this line to `.env`, then restart the service
-(new bots get it):
+## 5. Setting the indicator's class name (optional)
+
+If a real test finds the speaking indicator's class (say `abc123`, from `timeline.jsonl` or `dom/`), add
+this line to `.env`, then restart the service (new bots get it):
 
 ```bash
 echo 'BOT_ENV_SPEAKING_CLASSES=abc123' >> .env
@@ -98,5 +139,6 @@ echo 'BOT_ENV_SPEAKING_CLASSES=abc123' >> .env
 docker compose up -d
 ```
 
-Any `BOT_ENV_<NAME>=value` line in `.env` reaches every bot as `<NAME>=value`. Several class names can be
-given, separated by commas.
+A name starting with a dot means "a tile that contains an element with this class" (for example
+`.kssMZb`, which some public bot code used in 2026; not checked here). Several names can be given,
+separated by commas. Any `BOT_ENV_<NAME>=value` line in `.env` reaches every bot as `<NAME>=value`.

@@ -67,6 +67,12 @@ stop_requested = False
 mouse: human_mouse.HumanMouse
 # Called before every click in Meet (service mode: keeps our own page windows under Meet's window).
 before_click = None
+# The call's service side, once admitted (so its files are closed on every way out, a crash included).
+current_call = None
+# Service mode, after admission: clicks aim at the middle of buttons (see human_click).
+in_call_clicks = False
+# Called while the mouse moves in the call (keeps steady readings going).
+while_clicking = None
 
 
 def request_stop(_signum, _frame) -> None:
@@ -95,8 +101,22 @@ def excerpt(text: str, limit: int = 200) -> str:
 def human_click(page: Page, target: Locator) -> None:
     if before_click:
         before_click()
-    mouse.click_element(page, target)
-    if before_click:
+    if in_call_clicks:
+        # In the call (service mode): aim at the button's middle, and don't wait long for a button that isn't
+        # there (a hidden match must not stall the call for 10 s). The movement (a second or two) runs on its
+        # own thread while the bot keeps reading the captions and Meet's sound. Before admission: the proven
+        # clicks, unchanged.
+        rect = mouse.element_rect(page, target, inset=True, timeout=3_000)
+        if rect:
+            mover = threading.Thread(target=mouse.click, args=(rect,), name="mouse", daemon=True)
+            mover.start()
+            while mover.is_alive():
+                if while_clicking:
+                    while_clicking()
+                page.wait_for_timeout(50)
+    else:
+        mouse.click_element(page, target)
+    if before_click or in_call_clicks:
         nudge()  # in the call: make sure the release has reached the page
 
 
@@ -413,11 +433,34 @@ def turn_on_mic(page: Page, rep: Reporter) -> bool:
     return off.is_visible()
 
 
+def stop_buttons(page: Page) -> list[Locator]:
+    """Meet's "Stop presenting" buttons that are really on screen, the top bar's first (smallest y), then the
+    one on the bot's own presentation. The first real test (2026-11-05) clicked the first match in the page,
+    which was not one of these, and the share went on."""
+    buttons = page.get_by_role("button", name=STOP_SHARE)
+    viewport = getattr(mouse, "viewport", None)
+    width, height = (viewport[0], viewport[1]) if viewport else (1279, 632)
+    found = []
+    for i in range(min(buttons.count(), 8)):
+        button = buttons.nth(i)
+        try:
+            if not button.is_visible():
+                continue
+            box = button.bounding_box(timeout=1_000)
+        except PlaywrightError:
+            continue
+        if box and box["width"] >= 8 and box["height"] >= 8 and box["x"] >= 0 and box["y"] >= 0 \
+                and box["x"] + box["width"] <= width + 1 and box["y"] + box["height"] <= height + 1:
+            found.append((box["y"], box["x"], i, button))
+    return [button for *_, button in sorted(found, key=lambda f: f[:3])]
+
+
 def is_presenting(page: Page) -> bool:
     try:
-        if page.get_by_role("button", name=STOP_SHARE).first.is_visible():
+        if stop_buttons(page):
             return True
-        return bool(page.get_by_text(PRESENTING_TEXT).first.is_visible())
+        texts = page.get_by_text(PRESENTING_TEXT)
+        return any(texts.nth(i).is_visible() for i in range(min(texts.count(), 3)))
     except PlaywrightError:
         return False
 
@@ -439,6 +482,31 @@ def probe_in_call(page: Page) -> dict:
     }
 
 
+def press_key(name: str) -> None:
+    """One key press through VNC, like a person's keyboard (e.g. "c", "Escape")."""
+    from Xlib import XK
+
+    keysym = ord(name) if len(name) == 1 else XK.string_to_keysym(name)
+    mouse.vnc.key(keysym, True)
+    time.sleep(0.09)
+    mouse.vnc.key(keysym, False)
+    time.sleep(0.2)
+
+
+def mix(pieces: list[bytes]) -> bytes:
+    """Several 16-bit pieces played at once, as one (clipped)."""
+    if len(pieces) == 1:
+        return pieces[0]
+    import array
+
+    out = array.array("h", pieces[0])
+    for piece in pieces[1:]:
+        other = array.array("h", piece)
+        for i in range(min(len(out), len(other))):
+            out[i] = max(-32768, min(32767, out[i] + other[i]))
+    return out.tobytes()
+
+
 def safe_leave(page: Page) -> None:
     try:
         leave(page)
@@ -458,6 +526,13 @@ class InCall:
         self.webhooks = None
         self.pictures = None
         self.speakers = None
+        self.dom = None
+        self.people_changes = 0
+        self.media = None
+        self.screen_rec = None
+        self.taps = None
+        self.voices = None
+        self.captions = None
         self.sharing_url: str | None = None
         self.share_pending: dict | None = None
         self.share_lost_logged = False
@@ -480,19 +555,25 @@ class InCall:
         from webhooks import WebhookSender
 
         page, rep, cfg = self.page, self.rep, self.cfg
+        self._start_recordings()
         self.webhooks = WebhookSender(rep.log)
-        self.people = participants.People(page, cfg, rep, self.webhooks, open_panel=self._click)
+        self.people = participants.People(page, cfg, rep, self.webhooks, open_panel=self._click, wait=self.idle)
         self.people.tick(initial=True)
         if stop_requested:
             return STOPPED
 
+        if self.args.per_person_audio or self.media:
+            self._start_taps()
         audio_endpoint = cfg.endpoint_for("audio_separate_raw.data", "websocket")
         if audio_endpoint:
             import audio
 
-            self.audio = audio.start_for(self.args, cfg, audio_endpoint.url, rep, self.people)
+            self.audio = audio.start_for(self.args, cfg, audio_endpoint.url, rep, self.people, taps=self.taps,
+                                         tap=self.media.mixed if self.media else None)
         else:
             rep.log("no audio_separate_raw.data endpoint: the call's sound is not streamed")
+        if self.media and (self.audio is None or not hasattr(self.audio, "tap")):
+            self.media.record_mixed_myself()  # no mixed stream to copy: read the same sound for the file
 
         if cfg.camera_url:
             self._page_browser(cfg.camera_url)
@@ -516,7 +597,143 @@ class InCall:
 
         self._start_extras()
         rep.status("in_call_recording", page=page)
+        if not self.args.no_captions:
+            self._start_captions()
         return None
+
+    def _start_captions(self) -> None:
+        """Task R3: Meet's captions (only on the bot's screen) say who spoke when. Never touches the call."""
+        try:
+            import captions
+
+            captions.turn_on(self.page, self._click, press_key if mouse.vnc else None, self.rep.log)
+            self.captions = captions.CaptionReader(self.page, self.people, self.rep, self.cfg.bot_name,
+                                                   on_speech=self.speakers.heard if self.speakers else None)
+            if self.dom:
+                self.dom.request("captions_on")
+        except Exception as exc:  # noqa: BLE001
+            self.rep.log(f"captions: not started ({type(exc).__name__}: {exc})")
+
+    def _start_recordings(self) -> None:
+        """--record-screen and --save-media (test files in the run folder). Never touches the call."""
+        if self.args.record_screen:
+            try:
+                import media
+
+                if shutil.which("ffmpeg"):
+                    self.screen_rec = media.ScreenRecorder(self.rep.run_dir / "screen.mp4", self.rep.log)
+                else:
+                    self.rep.log("screen: no ffmpeg in this image, so no screen.mp4")
+            except Exception as exc:  # noqa: BLE001
+                self.rep.log(f"screen: not recorded ({type(exc).__name__}: {exc})")
+        if self.args.save_media:
+            try:
+                import media
+
+                self.media = media.MediaSaver(self.rep.run_dir, self.rep.log)
+            except Exception as exc:  # noqa: BLE001
+                self.rep.log(f"media: not saved ({type(exc).__name__}: {exc})")
+
+    def _start_taps(self) -> None:
+        """Meet's <audio> slots and each person's <video>, from an isolated world (bot/taps.py)."""
+        try:
+            import taps
+
+            self.taps = taps.MediaTaps(self.page, audio=True, video=self.media is not None)
+            import voices
+
+            # Each slot's sound to whoever talks (R3); the speaker timeline starts a moment later.
+            self.voices = voices.VoiceSplitter(lambda a, b: self.speakers.speaking_between(a, b) if self.speakers else {},
+                                               started_between=lambda a, b: self.speakers.started_between(a, b)
+                                               if self.speakers else set())
+            if self.media and self.people:
+                self.taps.allow_video(self.people.roster.present.keys())  # cameras from the first moment
+            self.rep.log("taps: Meet's <audio> slots" + (" and each person's <video>" if self.media else "")
+                         + " are read from an isolated world")
+        except Exception as exc:  # noqa: BLE001 - per-person audio then falls back to the mixed stream
+            self.rep.log(f"taps: not started ({type(exc).__name__}: {str(exc)[:200]})")
+
+    def _tick_taps(self) -> None:
+        if not self.taps:
+            return
+        present = self.people.roster.present if self.people else {}
+        if self.media:
+            self.taps.allow_video(present.keys())
+        chunks, videos = self.taps.drain()
+        if chunks:
+            if self.audio is not None and hasattr(self.audio, "feed"):
+                self.audio.feed(chunks)
+            if self.media:
+                import taps
+
+                for chunk in chunks:
+                    self.media.slot(chunk.get("slot", 0), chunk.get("t", 0) / 1000, taps.pcm_of(chunk))
+            if self.voices:
+                self.voices.feed(chunks)
+        if self.voices:
+            self._deliver_voices(self.voices.ready())
+        if self.media:
+            for message in videos:
+                self.media.video_message(message, lambda pid: present[pid].name if pid in present else None)
+
+    def _deliver_voices(self, named: list) -> None:
+        """Slot pieces given to people (bot/voices.py): to the live per-person stream and to audio/<name>.wav."""
+        if not named:
+            return
+        if self.audio is not None and hasattr(self.audio, "deliver"):
+            self.audio.deliver(named)
+        if not self.media:
+            return
+        import taps
+
+        names = {p.sent_id: p.name for p in (self.people.roster.present.values() if self.people else [])}
+        if self.speakers:
+            names = {**self.speakers.names, **names}
+        unknown: list = []  # pieces nobody can be given, heard at the same moment, are mixed together
+
+        def flush_unknown():
+            if unknown:
+                self.media.person("unknown", unknown[0][0], mix([pcm for _, pcm in unknown]))
+                unknown.clear()
+
+        for key, chunk in named:
+            t, pcm = chunk.get("t", 0) / 1000, taps.pcm_of(chunk)
+            if key is None:
+                if unknown and t - unknown[0][0] > 0.1:
+                    flush_unknown()
+                unknown.append((t, pcm))
+            else:
+                self.media.person(names.get(key, key.removeprefix("name:")), t, pcm)
+        flush_unknown()
+
+    def _close_recordings(self) -> None:
+        if self.voices:
+            try:
+                self._deliver_voices(self.voices.ready(flush=True))
+            except Exception as exc:  # noqa: BLE001
+                self.rep.log(f"media: last named pieces lost ({type(exc).__name__}: {exc})")
+            self.rep.log(f"voices: {self.voices.named} pieces given to a person, {self.voices.unknown} to nobody")
+        if self.taps:
+            try:
+                self.taps.stop_video()
+                self.page.wait_for_timeout(1_500)  # the recorders' last pieces come back meanwhile
+            except Exception:  # noqa: BLE001 - the page may be gone
+                pass
+            try:
+                self._tick_taps()
+            except Exception as exc:  # noqa: BLE001
+                self.rep.log(f"media: last pieces lost ({type(exc).__name__}: {exc})")
+            self.taps.close()
+            self.taps = None
+        if self.media:
+            self.media.close()
+        if self.screen_rec:
+            self.screen_rec.stop()
+        if self.media or self.screen_rec:
+            import media
+
+            listing = media.write_file_list(self.rep.run_dir)
+            self.rep.log("media: files saved (media-files.txt):\n" + listing.rstrip())
 
     def _start_extras(self) -> None:
         """Task 11 and 12: camera pictures and the speaker timeline. Failures here never touch the call."""
@@ -526,9 +743,57 @@ class InCall:
             self.pictures, self.speakers = extras.start(self)
         except Exception as exc:  # noqa: BLE001 - optional features must never end a call
             self.rep.log(f"extras not started: {type(exc).__name__}: {exc}")
+        if self.args.save_dom:
+            try:
+                import domdump
+
+                self.dom = domdump.DomSaver(self.page, self.rep)
+                self.dom.request("in_call_recording")
+                self.people_changes = self.people.changes if self.people else 0
+            except Exception as exc:  # noqa: BLE001
+                self.rep.log(f"dom: not started ({type(exc).__name__}: {exc})")
 
     def _click(self, target: Locator) -> None:
+        """A click in Meet that may change the layout (People panel, captions, share): pictures wait for the
+        tiles to stand still again."""
+        if self.pictures:
+            self.pictures.invalidate()
         human_click(self.page, target)
+
+    def screen_origin(self) -> tuple[float, float]:
+        """Where Meet's page starts on the screen (its top-left corner, below Chrome's own bars)."""
+        return tuple(mouse.origin) if mouse.origin else (0, 0)
+
+    def idle(self, ms: float) -> None:
+        """Wait in the call while still reading what needs steady reading (the captions, who speaks, Meet's
+        sound slots), so a long action (a screen share, opening the People panel) doesn't leave gaps there."""
+        end = time.monotonic() + ms / 1000
+        while True:
+            self._light_tick()
+            left = end - time.monotonic()
+            if left <= 0:
+                return
+            self.page.wait_for_timeout(min(100, left * 1000))
+
+    def light_tick_soon(self) -> None:
+        """While the mouse moves: a light tick at most every 100 ms."""
+        now = time.monotonic()
+        if now - getattr(self, "_last_light", 0.0) >= 0.1:
+            self._last_light = now
+            self._light_tick()
+
+    def _light_tick(self) -> None:
+        for name in ("pictures", "captions", "speakers"):  # pictures: where the tiles are now
+            extra = getattr(self, name)
+            if extra:
+                try:
+                    extra.tick()
+                except Exception:  # noqa: BLE001 - the main tick reports and turns off a failing extra
+                    pass
+        try:
+            self._tick_taps()
+        except Exception:  # noqa: BLE001
+            pass
 
     # -- every tick (any exception here is caught by the loop in attend) --
 
@@ -548,21 +813,29 @@ class InCall:
             self._confirm_share()
         elif self.sharing_url:
             self._watch_share()
+        try:
+            self._tick_taps()
+        except Exception as exc:  # noqa: BLE001 - test recordings must never end the call
+            self.rep.log(f"taps tick failed: {type(exc).__name__}: {exc}")
         if self.audio is not None and hasattr(self.audio, "tick"):  # --per-person-audio
             try:
                 self.audio.tick()
             except Exception as exc:  # noqa: BLE001 - experimental: never end the call for it
                 self.rep.log(f"per-person audio tick failed: {type(exc).__name__}: {exc}")
-        for extra in (self.pictures, self.speakers):
+        if self.people and self.people.changes != self.people_changes:
+            self.people_changes = self.people.changes
+            if self.dom:
+                self.dom.request("people")
+            if self.pictures:
+                self.pictures.invalidate()  # tiles move when people come and go
+        for name in ("pictures", "captions", "speakers", "dom"):
+            extra = getattr(self, name)
             if extra:
                 try:
                     extra.tick()
                 except Exception as exc:  # noqa: BLE001
                     self.rep.log(f"{type(extra).__name__} failed and is turned off: {type(exc).__name__}: {exc}")
-                    if extra is self.pictures:
-                        self.pictures = None
-                    else:
-                        self.speakers = None
+                    setattr(self, name, None)
         return None
 
     def _reopen_camera(self) -> Outcome | None:
@@ -598,15 +871,15 @@ class InCall:
         button = page.get_by_role("button", name=SHARE_BUTTON).first
         try:
             button.wait_for(state="visible", timeout=5_000)
-            human_click(page, button)
+            self._click(button)
         except PlaywrightError as exc:
             self.rep.log(f"no Share screen button ({type(exc).__name__})")
             return False
-        page.wait_for_timeout(800)
+        self.idle(800)
         menu = page.get_by_role("menuitem", name=SHARE_MENU_WINDOW).first
         try:
             if menu.is_visible():
-                human_click(page, menu)
+                self._click(menu)
         except PlaywrightError:
             pass
         return True
@@ -639,9 +912,11 @@ class InCall:
             self.share_pending = None
             rep.log(f"screen share started: Meet shows the bot presenting ({safe_url(self.sharing_url)})")
             rep.snapshot(page, f"share-started-{int(time.time())}")
-            page.wait_for_timeout(1_000)
+            self.idle(1_000)
             self.pages.keep_below(force=True)
             self.grab_screen("share-started")
+            if self.dom:
+                self.dom.request("share_start")
             return
         if time.monotonic() - pending["since"] < SHARE_CONFIRM:
             return
@@ -660,17 +935,32 @@ class InCall:
         page, rep = self.page, self.rep
         self.share_pending = None
         if is_presenting(page):
-            try:
-                human_click(page, page.get_by_role("button", name=STOP_SHARE).first)
-            except PlaywrightError:
-                pass
-            for _ in range(10):
+            # Confirm Meet no longer shows the bot presenting BEFORE closing the screen page (closing it would
+            # also end the share, but then Meet may show "your presentation stopped" or try again).
+            buttons = stop_buttons(page)
+            if not buttons:
+                rep.log("no 'Stop presenting' button on screen")
+            for n, button in enumerate(buttons[:3], 1):
+                try:
+                    box = button.bounding_box(timeout=1_000) or {}
+                    rep.log(f"clicking 'Stop presenting' ({'top bar' if box.get('y', 999) < 80 else 'on the presentation'}, "
+                            f"at {round(box.get('x', -1))},{round(box.get('y', -1))})")
+                    self._click(button)
+                except PlaywrightError as exc:
+                    rep.log(f"stop click {n} failed: {type(exc).__name__}")
+                for _ in range(10):
+                    if not is_presenting(page):
+                        break
+                    self.idle(500)
                 if not is_presenting(page):
                     break
-                page.wait_for_timeout(500)
-            rep.log("screen share stopped" if not is_presenting(page) else "warning: Meet still shows the bot presenting")
+                rep.log(f"Meet still shows the bot presenting after stop click {n}")
+            rep.log("screen share stopped (Meet no longer shows the bot presenting)" if not is_presenting(page)
+                    else "warning: Meet still shows the bot presenting; closing the screen page ends the share")
             rep.snapshot(page, f"share-stopped-{int(time.time())}")
             self.grab_screen("share-stopped")
+            if self.dom:
+                self.dom.request("share_stop")
         if self.pages:
             self.pages.close_screen()
         if self.sharing_url:
@@ -704,7 +994,10 @@ class InCall:
         for name, fn in (("pages", lambda: self.pages and self.pages.close()),
                          ("audio", lambda: self.audio and self.audio.stop()),
                          ("pictures", lambda: self.pictures and self.pictures.stop()),
+                         ("captions", lambda: self.captions and self.captions.stop()),
                          ("speakers", lambda: self.speakers and self.speakers.stop()),
+                         ("dom", lambda: self.dom and self.dom.stop()),
+                         ("recordings", self._close_recordings),
                          ("people", lambda: self.people and self.people.close()),
                          ("webhooks", lambda: self.webhooks and self.webhooks.close())):
             try:
@@ -715,8 +1008,11 @@ class InCall:
 
 def attend(p: Playwright, page: Page, args: argparse.Namespace, rep: Reporter, cfg: BotConfig,
            control: ControlServer | None) -> tuple[Outcome, InCall]:
+    global current_call, in_call_clicks, while_clicking
+    in_call_clicks = True
     rep.status("in_call_not_recording", page=page)
-    call = InCall(p, page, args, rep, cfg, control)
+    call = current_call = InCall(p, page, args, rep, cfg, control)
+    while_clicking = call.light_tick_soon
     if control:
         control.in_call.set()  # requests now wait for the start steps; one that waits too long is dropped
     outcome = call.start()
@@ -900,6 +1196,14 @@ def parse_args(argv: list[str] | None = None, environ: dict | None = None) -> ar
                         help="don't send each person's camera picture (video_separate_png.data)")
     parser.add_argument("--per-person-audio", action="store_true", default=env("PER_PERSON_AUDIO") == "1",
                         help="EXPERIMENTAL: one audio stream per person instead of one for the whole call")
+    parser.add_argument("--save-dom", action="store_true", default=env("SAVE_DOM") == "1",
+                        help="TEST: save Meet's page (HTML and accessibility tree) to dom/ at every change and every 30 s")
+    parser.add_argument("--no-captions", action="store_true", default=env("CAPTIONS") == "0",
+                        help="don't turn on Meet's captions (they say who spoke when; only the bot sees them)")
+    parser.add_argument("--save-media", action="store_true", default=env("SAVE_MEDIA") == "1",
+                        help="TEST: save the call's sound (audio/*.wav) and each person's camera (video/*.webm) in the run folder")
+    parser.add_argument("--record-screen", action="store_true", default=env("RECORD_SCREEN") == "1",
+                        help="TEST: record the bot's whole screen to screen.mp4 (5 frames a second)")
     args = parser.parse_args(argv)
     args.manager = None
     args.config = None
@@ -916,6 +1220,11 @@ def parse_args(argv: list[str] | None = None, environ: dict | None = None) -> ar
                 args.per_person_audio = True
             if options.get("camera_pictures") is False:
                 args.no_camera_pictures = True
+            if options.get("captions") is False:
+                args.no_captions = True
+            for key in ("save_dom", "save_media", "record_screen"):
+                if options.get(key):
+                    setattr(args, key, True)
     if not args.url or urlparse(args.url).hostname != "meet.google.com" or not urlparse(args.url).path.strip("/"):
         parser.error("a meeting link like https://meet.google.com/abc-defg-hij is required")
     if args.replay_session:
@@ -1038,6 +1347,7 @@ def main() -> int:
             outcome = ("fatal", "bot_errored", redact(f"{type(exc).__name__}: {exc}".splitlines()[0]))
             if admitted:
                 safe_leave(page)
+            call = call or current_call
         if control:
             control.in_call.clear()
             control.fail_pending()

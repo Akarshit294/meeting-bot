@@ -258,7 +258,7 @@ class People:
     """Ties the reader, the roster and the webhooks together; ticked from the bot's main loop."""
 
     def __init__(self, page, cfg, rep, webhooks, open_panel: Callable | None = None, reader: MeetReader | None = None,
-                 clock: Callable[[], float] = time.monotonic):
+                 clock: Callable[[], float] = time.monotonic, wait: Callable[[float], None] | None = None):
         self.page = page
         self.cfg = cfg
         self.rep = rep
@@ -266,8 +266,10 @@ class People:
         self.reader = reader or MeetReader(page, cfg.bot_name)
         self.roster = Roster(cfg.bot_name)
         self.open_panel = open_panel
+        self.wait = wait or (lambda ms: page.wait_for_timeout(ms))
         self.clock = clock
         self.panel_tries = 0
+        self.changes = 0  # joins and leaves so far (others watch it to react to a people change)
         self.last_read = 0.0
         self.logged: set[str] = set()
         self.source = None
@@ -288,7 +290,7 @@ class People:
         try:
             label = (button.get_attribute("aria-label", timeout=1_000) or button.inner_text(timeout=1_000)).strip()
             self.open_panel(button)
-            self.page.wait_for_timeout(1_500)
+            self.wait(1_500)
         except Exception as exc:  # noqa: BLE001
             self.rep.log(f"could not click the People button: {type(exc).__name__}")
             return
@@ -318,6 +320,7 @@ class People:
                 self.logged.add(key)
                 self.rep.event("entry_seen", self_=entry.is_self or self.roster._is_self(entry), **entry.attrs)
         events = self.roster.update(read.entries, read.reliable, now)
+        self.changes += len(events)
         for kind, person in events:
             self.rep.log(f"people: {kind} {person.name!r} ({person.id}) - {self.roster.count()} other(s) in the call")
             self.rep.event(f"participant_{kind}", id=person.id, name=person.name, source=read.source)

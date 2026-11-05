@@ -22,6 +22,8 @@ log = logging.getLogger("manager")
 
 TEST_PAGES = Path(__file__).with_name("testpages")
 WATCH_INTERVAL = 3.0
+# Our own per-bot switches (`xbot_options` in the create body; ./try.sh sends them, xebit-api never does).
+OPTION_KEYS = ("per_person_audio", "camera_pictures", "save_dom", "save_media", "record_screen", "captions")
 
 
 def safe_url(url: Any) -> str:
@@ -190,7 +192,7 @@ def create_app(settings: Settings, runner: Runner, store: Store | None = None, w
         endpoints = parse_endpoints(body.get("recording_config"))
         # Our own extension (./try.sh): per-bot switches. xebit-api never sends it.
         raw_options = body.get("xbot_options") if isinstance(body.get("xbot_options"), dict) else {}
-        options = {k: bool(raw_options[k]) for k in ("per_person_audio", "camera_pictures") if k in raw_options}
+        options = {k: bool(raw_options[k]) for k in OPTION_KEYS if k in raw_options}
         if store.active_count() >= settings.max_bots:
             raise HTTPException(status_code=429, detail=f"Too many bots: {settings.max_bots} are already running (MAX_BOTS)")
 
@@ -343,7 +345,17 @@ def create_app(settings: Settings, runner: Runner, store: Store | None = None, w
         bot = store.get(bot_id)
         return f"output/{bot.run_dir}" if bot and bot.run_dir else None
 
-    app.include_router(testreceiver.router(require_key, run_dir_of))
+    def media_files_of(bot_id: str) -> str | None:
+        """The bot's list of recordings with their lengths (media-files.txt, written before `done`)."""
+        bot = store.get(bot_id)
+        if not bot or not bot.run_dir:
+            return None
+        try:
+            return (settings.output_dir / Path(bot.run_dir).name / "media-files.txt").read_text()
+        except OSError:
+            return None
+
+    app.include_router(testreceiver.router(require_key, run_dir_of, media_files_of))
 
     if TEST_PAGES.is_dir():
         app.mount("/test", StaticFiles(directory=TEST_PAGES, html=True), name="test")

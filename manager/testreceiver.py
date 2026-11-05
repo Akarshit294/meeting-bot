@@ -43,7 +43,7 @@ def level_db(pcm: bytes) -> float | None:
     return round(20 * math.log10(rms + 1e-9), 1)
 
 
-def router(require_key, run_dir_of) -> APIRouter:
+def router(require_key, run_dir_of, media_files_of=lambda bot_id: None) -> APIRouter:
     bots: Bounded = Bounded()
     voices: Bounded = Bounded()
     r = APIRouter(prefix="/testrx", include_in_schema=False)
@@ -130,6 +130,12 @@ def router(require_key, run_dir_of) -> APIRouter:
         pictures = ", ".join(f"{k} {v}" for k, v in sorted(d["pictures"].items())) or "none"
         return (f"people: {people} | sound sent: {sound} | voice page hears the call: {heard} | "
                 f"pictures sent: {pictures}")
+
+    @r.get("/files", response_class=PlainTextResponse)
+    def files(bot: str, request: Request):
+        """The recordings the bot saved, with their lengths (for ./try.sh at the end of a run)."""
+        require_key(request.headers.get("authorization"))
+        return media_files_of(bot) or ""
 
     @r.get("/run-dir", response_class=PlainTextResponse)
     def run_dir(bot: str, request: Request):

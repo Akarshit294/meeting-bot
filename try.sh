@@ -3,6 +3,7 @@
 #
 #   ./try.sh <meet link> [bot name]
 #   ./try.sh --per-person-audio <meet link> [bot name]     (experimental: one sound stream per person)
+#   ./try.sh --no-recordings <meet link>                   (no audio/, video/ or screen.mp4 in the run folder)
 #
 # It starts the service if needed, sends a bot to the call with the test pages (a chime as its voice,
 # a big clock as its screen share), prints the live-view link and every status, and waits for keys:
@@ -11,16 +12,18 @@ set -u
 cd "$(dirname "$0")"
 
 usage() {
-  echo "Usage: ./try.sh [--per-person-audio] [--no-camera-pictures] <https://meet.google.com/abc-defg-hij> [bot name]"
+  echo "Usage: ./try.sh [--per-person-audio] [--no-camera-pictures] [--no-recordings] <https://meet.google.com/abc-defg-hij> [bot name]"
   exit 2
 }
 
 PER_PERSON=false
 PICTURES=true
+RECORD=true
 while [ $# -gt 0 ]; do
   case "$1" in
     --per-person-audio) PER_PERSON=true; shift ;;
     --no-camera-pictures) PICTURES=false; shift ;;
+    --no-recordings) RECORD=false; shift ;;
     -h|--help) usage ;;
     -*) echo "Unknown option: $1"; usage ;;
     *) break ;;
@@ -75,7 +78,8 @@ BODY=$(cat <<JSON
    {"type": "webhook", "url": "$RX/hooks", "events": ["participant_events.join", "participant_events.leave"]},
    {"type": "websocket", "url": "$WS/audio", "events": ["audio_separate_raw.data"]},
    {"type": "websocket", "url": "$WS/video", "events": ["video_separate_png.data"]}]},
- "xbot_options": {"per_person_audio": $PER_PERSON, "camera_pictures": $PICTURES}}
+ "xbot_options": {"per_person_audio": $PER_PERSON, "camera_pictures": $PICTURES, "save_dom": true,
+                  "save_media": $RECORD, "record_screen": $RECORD}}
 JSON
 )
 RESP=$(curl -sS -X POST "$API/api/v1/bot/" -H "$AUTH" -H "Content-Type: application/json" -d "$BODY")
@@ -102,8 +106,13 @@ SEEN=0
 LAST=""
 QUIT=0
 TICK=0
+RUNDIR=""
 while true; do
   BOT=$(curl -sS "$API/api/v1/bot/$ID/" -H "$AUTH")
+  if [ -z "$RUNDIR" ]; then
+    RUNDIR=$(curl -sS "$API/testrx/run-dir?bot=$ID" -H "$AUTH")
+    [ -n "$RUNDIR" ] && say "Run folder: $RUNDIR (logs, screenshots, recordings; filled while the bot runs)"
+  fi
   CHANGES=$(printf '%s' "$BOT" | grep -o '"code":"[a-z_]*","sub_code":[^,]*')
   COUNT=$(printf '%s\n' "$CHANGES" | grep -c '"code"')
   if [ "$COUNT" -gt "$SEEN" ]; then
@@ -140,6 +149,11 @@ while true; do
       say "$(curl -sS "$API/testrx/summary?bot=$ID&tag=$TAG" -H "$AUTH")"
       DIR=$(curl -sS "$API/testrx/run-dir?bot=$ID" -H "$AUTH")
       [ -n "$DIR" ] && say "Run folder (screenshots, bot.log, events.jsonl, camera pictures): $DIR"
+      FILES=$(curl -sS "$API/testrx/files?bot=$ID" -H "$AUTH")
+      if [ -n "$FILES" ]; then
+        say "Recordings in the run folder (length):"
+        printf '%s\n' "$FILES" | sed 's/^/    /'
+      fi
       exit 0 ;;
   esac
   [ "$QUIT" = 1 ] && { sleep 2; continue; }

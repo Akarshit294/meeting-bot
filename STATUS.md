@@ -1,8 +1,14 @@
 # STATUS
 
-Where the overnight build (2026-11-04) stands.
+Where the build stands: the overnight build (2026-11-04, tasks 1-12) and Round 2 (2026-11-05, R1-R5).
 
-**In short:** all 12 tasks are done and merged into `main`. Every part works against a fake Meet page in
+**Round 2 in short:** R1 to R5 are done and merged into `main`. Every run folder can now hold the call's
+recordings (each person's sound, each camera, the bot's whole screen), Meet's real page during the call,
+and who spoke when from Meet's captions. The pictures and "Stop presenting" problems from the first real
+test are fixed. All tested against the fake Meet page only; the Round 2 test for a real call is at the
+top of `MORNING.md`.
+
+**Overnight build in short:** all 12 tasks are done and merged into `main`. Every part works against a fake Meet page in
 this VM:
 - the join (the proven code, unchanged);
 - the bot's voice and its hearing of the call;
@@ -11,6 +17,107 @@ this VM:
 
 The experimental one-stream-per-person sound (`--per-person-audio`) also works there. Nothing was tried on
 real Meet: that is not allowed from this VM. Start with `MORNING.md`.
+
+## Round 2 (2026-11-05)
+
+The first real Meet test is in `evidence/real-meet-2026-11-05/`. Round 2 adds recordings to every run
+folder and fixes what that test found (`docs/PLAN.md`, ROUND 2).
+
+| Task | State | Notes |
+| --- | --- | --- |
+| R1 See the real page | done | `--save-dom` (on in `./try.sh`): `dom/NNN-<time>-<why>.html` (`page.content()`) and `.aria.yml` (`aria_snapshot()` of the body), both read in Playwright's isolated world, at `in_call_recording`, every people change, share start and stop, and every 30 s. Docker test: `tests/test_docker_round2.py` |
+| R2 Recordings | done | `--save-media` (on in `./try.sh`): `audio/mixed.wav` (the frames streamed to xebit), `audio/slot-N.wav` (Meet's `<audio>` slots, from the isolated world), `video/<name>.webm` (each camera-on person's tile `<video>`, MediaRecorder in the isolated world; a new element gives `<name>-2.webm`). `--record-screen` (on in `./try.sh`): `screen.mp4` (ffmpeg x11grab, 5 frames a second). All sound files line up (silence where nothing came). `media-files.txt` lists every file with its length; `./try.sh` prints it at the end. Docker test: `tests/test_docker_round2.py` |
+| R3 Captions, who spoke when, each person's sound | done | After the microphone and the camera page the bot turns Meet's captions on with the human mouse (both button versions: "Turn on captions", and "Captions and translation" with its switch; then the `c` key; else it logs and carries on). `captions.jsonl` (read with locators: the "Captions" region's text and its avatars' names), `speakers.jsonl` from the captions plus the indicator, `audio/<name>.wav` and `audio/unknown.wav` from Meet's slots (`bot/voices.py`); `--per-person-audio` uses the same naming. Fake meeting: 98% of each person's file is their tone. See `docs/per-person-audio.md` |
+| R4 Fixes from the real test | done | 1. Pictures: why so few (run 2: 5 in 45 s) — an unchanged picture was skipped and re-sent only every 5 s, and a camera-off tile never changes; why none (run 3) — the pictures were made in the bot's main loop, which was busy for ~25 s with the screen share and the People panel. Now every picture is sent, about twice a second, cut from a grab of the X screen on its own thread; a picture is sent only if the tile stood still before and after the grab (else it could show whoever moved into a leaver's place); `camera/<name>.png` from the first picture. (Run 2's `camera/` did have `Akarshit.png`; run 3's stayed empty because nothing was sent.) The bot's own self-view over someone's tile is painted over. 2. Stop presenting: the old code clicked the first "Stop presenting" in the page, which was not on screen (10 s wait, then nothing); now only buttons really on screen, the top bar's first, then the one on the presentation, and the screen page closes only after Meet stops showing the bot presenting. In-call clicks also aim at the middle of round buttons. 3. `./try.sh` prints the run folder at the start and the recordings with their lengths at the end |
+| R5 Finish | done | Fake-meeting tests for R1-R4 (`tests/test_docker_round2.py`, plus checks in `tests/test_docker_meeting.py`); whole suite green (see below); this section; the Round 2 test at the top of `MORNING.md`; merged into `main` |
+
+### What was tested here (round 2), and how
+
+All in this VM, with the fake Meet page, the bot in its real container, through the manager's API
+(`tests/test_docker_round2.py`: one run with every `./try.sh` option on, 3 fake people, one with the camera
+off, a screen share, a join and a leave):
+
+1. **R1:** `dom/` holds a page snapshot and an accessibility tree at `in_call_recording`, `captions_on`,
+   people changes, share start and stop, and every 30 s.
+2. **R2:** `audio/mixed.wav` (as long as the call, everyone's tone), 3 `audio/slot-N.wav` files of the same
+   length, `video/Asha.webm`, `Asha-2.webm` (her video element was replaced) and `Meera.webm` in their
+   colours and of the right length, none for Ravi (camera off), `screen.mp4` (H.264, 5 frames a second,
+   1280x720, index at the front), `media-files.txt` and the manager's `/testrx/files` (what `./try.sh`
+   prints).
+3. **R3:** captions turned on through the "Captions and translation" menu (the version in the first real
+   test's screenshots) in that run, and through the plain "Turn on captions" button in
+   `tests/test_docker_meeting.py`; `captions.jsonl` matches what the page showed, never the bot's "You";
+   `speakers.jsonl` finds the start and end of every turn (from captions only: the fake's speaking
+   indicator is off in that run); `audio/Asha.wav`, `Ravi.wav`, `Meera.wav` each carry that person's tone
+   (at least 80% of their loud pieces; usually 95-100%).
+4. **R4:** pictures about twice a second for everyone, the camera-off person too, `camera/<name>.png` for
+   each; "Stop presenting" is clicked in the top bar (not the off-screen match the fake puts first, as real
+   Meet seemed to), and confirmed before the screen page closes.
+5. Everything from the overnight build still passes. At the end of round 2: `pytest` 119 passed;
+   `pytest -m docker` 37 passed and 1 failed once, then passed when run again
+   (`test_join_only_still_joins_like_the_proven_runs`: in the fake meeting the `--join-only` single click
+   on "Ask to join" sometimes doesn't register; that path is the proven join, unchanged on purpose, and
+   service mode has a second try; see Known gaps).
+6. `./try.sh` itself, against the fake meeting (this VM's `.env` points every bot there): it printed the run
+   folder 2 s after the start and, after a leave, the recordings with their lengths (`audio/mixed.wav
+   519.8 s`, `video/Asha.webm 516.0 s`, `video/Meera.webm 503.3 s`, `screen.mp4 520.0 s`).
+
+### Only a real Meet call can prove (round 2)
+
+1. That the captions button is found and the captions area is read as expected (both versions are handled;
+   the structure comes from public bot code of 2026, not from our own snapshots). `dom/` will show it.
+2. Meet's real caption lag, and so how much of each person's sound goes to the right file (section
+   "Where it fails" in `docs/per-person-audio.md`).
+3. That Meet's `<video>` elements sit inside the tiles and can be recorded from the isolated world (the
+   `<audio>` tap is the same technique as `--per-person-audio`).
+4. That the top bar's "Stop presenting" is now clicked (the first test's screenshots show it at the top).
+5. CPU with real cameras and `./try.sh`'s recordings (see measurements).
+
+### Known gaps (round 2)
+
+1. **The first moments of each turn often go to `audio/unknown.wav`** (until the new speaker's first
+   caption shows). Back-to-back speakers in one slot with no pause: the first keeps the slot about as long
+   as the caption lag.
+2. **Pictures pause for about a second after each layout change** (screen share, People panel, captions,
+   someone joining or leaving): a picture is sent only if the tile stood still before and after the grab.
+   In the busiest fake call (6 layout changes in 40 s) that gave 1.3-1.6 pictures a second instead of 2.
+3. **WebM files play in a browser, not in QuickTime.** `screen.mp4` plays in both.
+4. **If the bot is killed** (not stopped), the files stay playable but the WebM and MP4 files lack their
+   index (a browser still plays them; seeking may not work).
+5. **`dom/` grows** by a few MB per snapshot on real Meet (about 5 MB a minute): it is a test option.
+6. **Captions are on in service mode too** (they are the only working "who spoke when" so far). Turn them
+   off per bot with `"xbot_options": {"captions": false}` if they ever disturb a demo.
+7. **`--join-only`'s single "Ask to join" click sometimes doesn't register in the fake meeting** (once in
+   the last full run of the Docker tests). It is the proven join path, kept exactly as it was (rule 4); in
+   real Meet it went 5 of 5. Likely cause: the recorded click lands near the rounded end of the fake's
+   pill-shaped button. In-call clicks now aim at the middle of buttons; the pre-join clicks were left alone.
+
+### Round 2 measurements (one bot, fake meeting, this VM: 4 CPUs)
+
+`python3 scripts/measure-cpu.py '<xbot_options>'`: `docker stats` every ~2 s for 30 s, in the call, with 3 fake
+people (2 cameras on, 320x180 at 15 frames a second) and Meet-like `<audio>` slots. 100% = one CPU core.
+
+Measured after R2 (before captions and the new pictures):
+
+| Options | CPU average | CPU highest | Memory |
+| --- | --- | --- | --- |
+| none (the service default then: voice, sound stream, pictures, people) | 67% | 81% | 614 MiB |
+| `record_screen` | 68% | 80% | 671 MiB |
+| `save_media` (mixed, 3 slots, 2 camera files) | 71% | 85% | 662 MiB |
+| `save_media` + `record_screen` + `save_dom` | 75% | 84% | 697 MiB |
+
+Measured at the end of round 2 (same setup, the fake's "Captions and translation" captions on):
+
+| Options | CPU average | CPU highest | Memory |
+| --- | --- | --- | --- |
+| none (the service default now: also captions, and pictures twice a second for everyone) | 78% | 86% | 663 MiB |
+| `captions: false` | 74% | 84% | 659 MiB |
+| `save_media` + `record_screen` + `save_dom` (what `./try.sh` turns on) | 92% | 112% | 747 MiB |
+| the same + `per_person_audio` | 91% | 106% | 746 MiB |
+
+All of it fits the budget (2.5 cores, 5 GB). Real cameras are bigger than the fake ones (up to 1280x720), and
+each camera file is a VP8 encode in the bot's Chrome, so expect more on real Meet; that is why these stay
+test-only (off in service mode). Check with `docker stats` during the Round 2 test (`MORNING.md`).
 
 ## Tasks
 
@@ -205,6 +312,21 @@ Read in Chromium's source (tags 120 to 145) and checked in the bot image:
 ## Decisions
 
 (Each one: what was unclear, what was chosen, why.)
+
+Round 2:
+
+- **Captions are on by default in service mode** (`--no-captions` / `"captions": false` turns them off). The
+  plan asks for them after admission; they show only on the bot's screen, and they are the only reliable
+  "who spoke when" so far. If they can't be turned on, nothing else changes.
+- **In the call, a click aims at the middle of the button** (the box shrunk by a quarter on each side) and
+  waits at most 3 s for the button. Found in the fake meeting: the recorded click positions can land in the
+  cut-off corner of a round or pill-shaped button, which then hits what is behind it; Meet's buttons are
+  round. The movement itself runs on its own thread while the bot keeps reading captions and sound. Before
+  admission nothing changed (the proven join).
+- **Per-person sound is named 2.5 s late** (captions come after the words), with the time it was heard.
+- **The fake meeting's slots always carry a stream** (silence when nobody talks): a slot with no source at
+  all for a moment made Chrome play it 10% slow afterwards in the fake, which never happens with Meet's
+  WebRTC slots.
 
 - **Browser A (Meet) in service mode drops `--use-fake-ui-for-media-stream` too**, not only the fake
   device flags. Reason: with that flag Chrome skips the screen picker and captures the whole screen, so

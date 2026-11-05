@@ -13,7 +13,16 @@
     data-requested-participant-id / data-tile-media-id, the bot's own tile with "Backgrounds and effects",
     "Show in a tile", "More options for <name>" and "Others might still see your full video.";
   - left: "You left the meeting", "Rejoin", "Return to home screen"; removed: "You've been removed from the meeting".
-  Query options: admit=<s> (default 2), join_at=<s> (20), leave_at=<s> (40), deny=1, audio=mix|perperson.
+  - camera: a person with the camera on has a <video> in their tile, showing their colour with a moving dot
+    (a canvas stream, like a remote camera); a person with the camera off has an empty <video> (no stream).
+    Tiles are kept, not rebuilt, when people come and go (like real Meet); the command "recam" gives a
+    person a new <video> element.
+  - captions (task R3; structure from public Meet caption readers, 2026): a "Turn on captions" button (cc=a,
+    default) or a "Captions and translation" button with a "Turn on captions" switch in a little menu (cc=b);
+    the key "c" also toggles them. A region "Captions" with one block per speaker turn: avatar img (alt =
+    name), name, text that grows word by word 0.5 s behind the voice. The bot's own voice shows as "You".
+  Query options: admit=<s> (default 2), join_at=<s> (20), leave_at=<s> (40), deny=1, audio=mix|perperson,
+  cc=a|b, indicator=0 (no speaking indicator: who speaks shows only in the captions).
 -->
 <style>
   :root { color-scheme: dark; }
@@ -62,10 +71,19 @@
   #side button { position: absolute; top: 576px; width: 44px; height: 44px; border-radius: 22px; border: 0; background: #3c4043; color: #e8eaed; font-size: 9px; }
   #call.panel #stage { right: 332px; }  /* like real Meet: the side panel makes room, it doesn't cover the tiles */
   .tile .cam { position: absolute; left: 10px; top: 10px; width: 14px; height: 14px; border-radius: 7px; background: rgba(255,255,255,.6); }
+  .tile video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .tile .nm, .tile .initial, .tile .icon, .tile .cam, .tile .selfbtn { z-index: 1; }
   #panel { position: absolute; right: 16px; top: 64px; width: 300px; bottom: 88px; background: #fff; color: #202124; border-radius: 8px; padding: 12px; overflow: auto; }
   #panel [role=listitem] { padding: 8px 4px; border-bottom: 1px solid #eee; }
   #panel .host { font-size: 11px; color: #5f6368; }
   #status { position: absolute; left: 0; right: 0; top: 40%; text-align: center; font-size: 24px; }
+  #call.cc #stage { bottom: 200px; }  /* like Meet: the captions area takes the bottom of the stage */
+  #captions { position: absolute; left: 120px; right: 120px; bottom: 92px; height: 104px; overflow: hidden; color: #fff; }
+  #captions .nMcdL { display: flex; gap: 8px; margin: 2px 0; }
+  #captions .adE6rb { display: flex; gap: 6px; align-items: center; min-width: 110px; }
+  #captions img { width: 20px; height: 20px; border-radius: 10px; }
+  #captions .NWpY1d { font-weight: bold; }
+  #ccmenu { position: absolute; left: 560px; top: 430px; width: 240px; background: #2d2e31; color: #e8eaed; border-radius: 8px; padding: 10px; }
   #debug { position: absolute; left: 4px; bottom: 2px; font: 10px monospace; color: #9aa0a6; }
 </style>
 </head>
@@ -84,9 +102,14 @@
 <div id="call" class="hidden">
   <div id="topbar"><span id="clock">9:47 AM</span> | abc-defg-hij</div>
   <button id="people" data-tooltip-id="ucc-52"><span class="sr">People</span> <span id="count">1</span></button>
-  <div id="banner" class="hidden" role="status">You are presenting to everyone <button id="stopshare">Stop presenting</button></div>
+  <!-- While presenting, like the first real test (2026-11-05): a "Stop presenting" match that is not on screen
+       comes first in the page, then the top bar's button, then one on the bot's own presentation. -->
+  <button id="stopghost" class="hidden" aria-label="Stop presenting" style="position:absolute;left:-10000px;top:40px">Stop presenting</button>
+  <div id="banner" class="hidden" role="status">Maya (You, presenting) <button id="stopshare">Stop presenting</button></div>
   <div id="stage">
-    <div id="presentation"><video id="sharevideo" muted autoplay playsinline></video></div>
+    <div id="presentation"><video id="sharevideo" muted autoplay playsinline></video>
+      <div id="selfshare" style="position:absolute;left:0;right:0;top:35%;text-align:center;color:#fff">You are presenting<br>
+        <button id="stopself" style="margin-top:8px;padding:8px 14px;border-radius:18px;border:1px solid #8ab4f8;background:#202124;color:#8ab4f8">Stop presenting</button></div></div>
     <div id="tiles"></div>
   </div>
   <div id="panel" class="hidden" aria-label="Side panel">
@@ -101,10 +124,16 @@
     <button id="ccam" aria-label="Turn on camera" class="off" data-is-muted="true">videocam_off</button>
     <button id="share" aria-label="Share screen">computer_arrow_up</button>
     <button aria-label="Send a reaction">mood</button>
-    <button aria-label="Turn on captions">closed_caption_off</button>
+    <button id="cc" aria-label="Turn on captions">closed_caption_off</button>
     <button aria-label="Raise hand (ctrl + alt + h)">back_hand</button>
     <button aria-label="More options">more_vert</button>
     <button id="leave" aria-label="Leave call">call_end</button>
+  </div>
+  <div id="captions" class="vNKgIf UDinHf hidden" role="region" aria-label="Captions" tabindex="0"></div>
+  <div id="ccmenu" class="hidden" role="menu" aria-label="Captions and translation">
+    <div>Captions</div>
+    <button id="ccswitch" role="switch" aria-checked="false" aria-label="Turn on captions">toggle_off</button>
+    <div>Language of the meeting: English</div>
   </div>
   <div id="side">
     <button style="right:76px" aria-label="Chat with everyone">chat</button>
@@ -199,15 +228,23 @@ function startPerPerson() {
   for (let i = 0; i < 3; i++) {
     const a = document.createElement("audio"); a.autoplay = true;
     const dest = ctx.createMediaStreamDestination();
+    // Like a WebRTC track, a slot never stops carrying sound (silence when nobody is in it). A stream with no
+    // source at all for a moment makes Chrome play the <audio> element 10% slow afterwards (seen in testing).
+    const hush = ctx.createConstantSource(); hush.offset.value = 0; hush.connect(dest); hush.start();
     a.srcObject = dest.stream; document.body.appendChild(a); a.play().catch(() => {});
     slots.push({ el: a, dest, who: null, osc: null });
   }
 }
 function speak(person, on) {
+  const indicator = Q.get("indicator") !== "0";
   const tile = document.querySelector(`.tile[data-participant-id="${person.id}"]`);
-  if (tile) tile.classList.toggle("speaking", on);
+  if (tile && indicator) tile.classList.toggle("speaking", on);
   const item = document.querySelector(`#plist [data-participant-id="${person.id}"]`);
-  if (item) item.dataset.speaking = on ? "true" : "false";
+  if (item && indicator) item.dataset.speaking = on ? "true" : "false";
+  const was = !!(state.talking || {})[person.id];
+  state.talking = { ...(state.talking || {}), [person.id]: on };
+  if (on && !was) captionTurn(person.name);
+  if (!on && was) captionEnd(person.name);
   if (AUDIO_MODE === "perperson") {
     if (on) {
       const slot = slots.find((x) => !x.who) || slots[0];
@@ -222,8 +259,67 @@ function speak(person, on) {
     state.slots = slots.map((x) => x.who);
   }
   state.speaking = people.filter((p) => document.querySelector(`.tile.speaking[data-participant-id="${p.id}"]`)).map((p) => p.id);
-  state.speak_log = (state.speak_log || []).concat([[Date.now(), person.id, on]]).slice(-60);
+  if (on !== was) state.speak_log = (state.speak_log || []).concat([[Date.now(), person.id, on]]).slice(-400);
 }
+
+// ---- captions ----
+const CC_B = Q.get("cc") === "b";
+const WORDS = "so the plan for this week is to finish the demo and then we test it with real people next".split(" ");
+const turns = {};  // name -> the block being written, while the voice lasts (+ the captions' 0.5 s lag)
+state.captions_on = false; state.caption_log = [];
+function avatar(name) {
+  const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='20' height='20'><circle cx='10' cy='10' r='10' fill='#888'/></svg>`;
+  return `<img class="Z6byG r6DyN" alt="${name}" src="data:image/svg+xml,${encodeURIComponent(svg)}">`;
+}
+function captionTurn(name) {
+  const turn = { name, words: 0, end: null, block: null };
+  turns[name] = turn;
+  const grow = () => {
+    if (turns[name] !== turn) return;
+    const now = Date.now();
+    if (turn.end && now > turn.end + 500) {  // the voice stopped 0.5 s ago: last revision, then the block is done
+      if (turn.block) {
+        const tx = turn.block.querySelector(".ygicle"); tx.textContent = tx.textContent.replace(/^./, (c) => c.toUpperCase()) + ".";
+        state.caption_log = state.caption_log.concat([[now, name, tx.textContent]]).slice(-600);
+      }
+      delete turns[name]; return;
+    }
+    if (state.captions_on && state.phase === "in_call") {
+      if (!turn.block) {
+        turn.block = document.createElement("div"); turn.block.className = "nMcdL bj4p3b";
+        turn.block.innerHTML = `<div class="adE6rb">${avatar(name)}<div class="KcIKyf jxFHg"><span class="NWpY1d">${name}</span></div></div><div class="ygicle VbkSUe"></div>`;
+        $("captions").appendChild(turn.block);
+        while ($("captions").children.length > 6) $("captions").firstElementChild.remove();
+      }
+      const tx = turn.block.querySelector(".ygicle");
+      tx.textContent = (tx.textContent ? tx.textContent + " " : "") + WORDS[turn.words++ % WORDS.length];
+      state.caption_log = state.caption_log.concat([[now, name, tx.textContent]]).slice(-600);
+    }
+    setTimeout(grow, 300);
+  };
+  setTimeout(grow, 500);
+}
+function captionEnd(name) { if (turns[name]) turns[name].end = Date.now(); }
+function setCaptions(on) {
+  state.captions_on = on; log("captions " + on);
+  $("captions").classList.toggle("hidden", !on); $("call").classList.toggle("cc", on);
+  if (CC_B) {
+    $("cc").setAttribute("aria-pressed", String(on));
+    $("ccswitch").setAttribute("aria-checked", String(on));
+    $("ccswitch").setAttribute("aria-label", on ? "Turn off captions" : "Turn on captions");
+  } else {
+    $("cc").setAttribute("aria-label", on ? "Turn off captions" : "Turn on captions");
+  }
+}
+if (CC_B) { $("cc").setAttribute("aria-label", "Captions and translation"); $("cc").setAttribute("aria-pressed", "false"); $("cc").textContent = "translate_cc"; }
+$("cc").onclick = () => { if (CC_B) $("ccmenu").classList.toggle("hidden"); else setCaptions(!state.captions_on); };
+$("ccswitch").onclick = () => setCaptions(!state.captions_on);
+document.addEventListener("keydown", (e) => {
+  state.keys = (state.keys || []).concat([e.key]).slice(-20);
+  if (state.phase !== "in_call" || e.target.tagName === "INPUT") return;
+  if (e.key === "Escape") $("ccmenu").classList.add("hidden");
+  if (e.key === "c") setCaptions(!state.captions_on);
+});
 
 // ---- pre-join ----
 function toggle(btn, device) {
@@ -256,6 +352,30 @@ function syncBar() {
 $("cmic").onclick = () => { state.mic_on = !state.mic_on; syncBar(); log("mic " + state.mic_on); };
 $("ccam").onclick = () => { state.cam_on = !state.cam_on; syncBar(); log("cam " + state.cam_on); };
 
+// ---- cameras: each camera-on person's picture is a canvas stream (their colour, a moving dot) ----
+const cams = {};
+function camFor(p) {
+  if (!cams[p.id]) {
+    const c = document.createElement("canvas"); c.width = 320; c.height = 180;
+    cams[p.id] = { canvas: c, stream: c.captureStream(15), color: p.color };
+  }
+  return cams[p.id].stream;
+}
+setInterval(() => {
+  const x = 40 + Math.round(240 * (0.5 + 0.5 * Math.sin(performance.now() / 300)));
+  for (const id in cams) {
+    const g = cams[id].canvas.getContext("2d");
+    g.fillStyle = cams[id].color; g.fillRect(0, 0, 320, 180);
+    g.fillStyle = "rgba(255,255,255,.6)"; g.beginPath(); g.arc(x, 30, 8, 0, 7); g.fill();
+  }
+}, 66);
+function addVideo(tile, p) {
+  const old = tile.querySelector("video"); if (old) old.remove();
+  const v = document.createElement("video"); v.autoplay = true; v.muted = true; v.playsInline = true;
+  if (p.camera) { v.srcObject = camFor(p); v.play().catch(() => {}); }
+  tile.prepend(v);
+}
+
 function tileFor(p, self) {
   const t = document.createElement("div");
   t.className = "tile"; t.style.background = p.color;
@@ -268,15 +388,21 @@ function tileFor(p, self) {
       `<button class="selfbtn" style="right:8px" aria-label="More options for ${p.name}">more_vert</button>` +
       `<div class="sr">Others might still see your full video.</div>`;
   }
+  if (!self) addVideo(t, p);
   if (p.camera) t.insertAdjacentHTML("beforeend", `<div class="cam" aria-hidden="true"></div>`);
   t.insertAdjacentHTML("beforeend", `<div class="initial" aria-hidden="true" data-initial="${initial}"></div><div class="nm">${p.name}</div>` +
     `<div class="sr">${p.name}</div><div class="icon">devices</div>`);
   return t;
 }
 function render() {
-  const tiles = $("tiles"); tiles.innerHTML = "";
-  for (const p of people) tiles.appendChild(tileFor(p, false));
-  tiles.appendChild(tileFor({ id: SELF_ID, name: state.name || "You", color: "#3c4043" }, true));
+  // Like real Meet: tiles stay when others come and go; only the changed ones are added or removed.
+  const tiles = $("tiles");
+  const want = [...people.map((p) => p.id), SELF_ID];
+  for (const t of [...tiles.children]) if (!want.includes(t.dataset.participantId)) t.remove();
+  for (const p of people) {
+    if (!tiles.querySelector(`.tile[data-participant-id="${p.id}"]`)) tiles.insertBefore(tileFor(p, false), tiles.querySelector(`.tile[data-participant-id="${SELF_ID}"]`));
+  }
+  if (!tiles.querySelector(`.tile[data-participant-id="${SELF_ID}"]`)) tiles.appendChild(tileFor({ id: SELF_ID, name: state.name || "You", color: "#3c4043" }, true));
   $("count").textContent = String(people.length + 1);
   const list = $("plist"); list.innerHTML = "";
   for (const p of [{ id: SELF_ID, name: state.name, self: true }, ...people]) {
@@ -293,6 +419,8 @@ function admit() {
   state.phase = "in_call"; state.admitted_at = Date.now(); log("admitted");
   $("waiting").classList.add("hidden");
   render(); startSound();
+  // The bot's own voice is captioned too, as "You" (the bot must skip it).
+  setTimeout(() => { if (state.phase === "in_call") { captionTurn("You"); setTimeout(() => captionEnd("You"), 1500); } }, 12000);
   setTimeout(() => { if (state.phase === "in_call") { people.push(LATER); render(); log("Meera joined"); } }, JOIN_AT * 1000);
   setTimeout(() => {
     if (state.phase !== "in_call") return;
@@ -307,7 +435,7 @@ function cycleSpeakers() {
     if (state.phase !== "in_call") return;
     for (const p of EVERYONE) speak(p, false);
     const who = people[n % people.length]; n++;
-    if (who) speak(who, true);
+    setTimeout(() => { if (who && state.phase === "in_call" && people.includes(who)) speak(who, true); }, 400);  // a short pause between turns
     setTimeout(step, 3000);
   };
   step();
@@ -327,7 +455,7 @@ $("share").onclick = async () => {
   const track = shareStream.getVideoTracks()[0];
   state.share = { active: true, frames: 0, label: track.label, surface: track.getSettings().displaySurface, started: Date.now(), samples: [] };
   $("sharevideo").srcObject = shareStream;
-  $("stage").classList.add("sharing"); $("banner").classList.remove("hidden");
+  $("stage").classList.add("sharing"); $("banner").classList.remove("hidden"); $("stopghost").classList.remove("hidden");
   track.onended = () => stopShare("track ended");
   const v = $("sharevideo");
   const count = () => { if (!state.share.active) return; state.share.frames++; v.requestVideoFrameCallback(count); };
@@ -336,10 +464,12 @@ $("share").onclick = async () => {
 function stopShare(why) {
   if (shareStream) shareStream.getTracks().forEach((t) => t.stop());
   shareStream = null; state.share.active = false; state.share.stopped = why;
-  $("stage").classList.remove("sharing"); $("banner").classList.add("hidden");
+  $("stage").classList.remove("sharing"); $("banner").classList.add("hidden"); $("stopghost").classList.add("hidden");
   log("share stopped: " + why);
 }
-$("stopshare").onclick = () => stopShare("Stop presenting clicked");
+$("stopshare").onclick = () => stopShare("Stop presenting clicked (top bar)");
+$("stopself").onclick = () => stopShare("Stop presenting clicked (on the presentation)");
+$("stopghost").onclick = () => log("the off-screen Stop presenting was clicked (it does nothing)");
 function sampleShare() {
   const v = $("sharevideo");
   if (!state.share.active || !v.videoWidth) return;
@@ -377,6 +507,10 @@ async function commands() {
       if (c.do === "add") { people.push(c.person); render(); }
       if (c.do === "remove") { const i = people.findIndex((p) => p.id === c.id); if (i >= 0) people.splice(i, 1); render(); }
       if (c.do === "admit") admit();
+      if (c.do === "recam") {
+        const p = people.find((x) => x.id === c.id), t = document.querySelector(`.tile[data-participant-id="${c.id}"]`);
+        if (p && t) addVideo(t, p);
+      }
     }
   } catch (e) {}
 }

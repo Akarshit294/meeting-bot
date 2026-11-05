@@ -36,7 +36,7 @@ RUN pip install --no-cache-dir "playwright==${PLAYWRIGHT_VERSION}" \
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends tini xvfb x11vnc novnc websockify \
-      pulseaudio pulseaudio-utils x11-utils \
+      pulseaudio pulseaudio-utils x11-utils ffmpeg \
  && rm -rf /var/lib/apt/lists/* \
  && cd /usr/share/novnc \
  && echo '<meta http-equiv="refresh" content="0; url=vnc.html?autoconnect=true&resize=scale&reconnect=true&view_only=true">' \

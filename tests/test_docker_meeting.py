@@ -301,14 +301,15 @@ def test_camera_pictures_rate(run):
     rate = (late[asha] - early.get(asha, 0)) / seconds
     assert 1.2 <= rate <= 2.6, f"Asha (camera on): {rate:.2f} pictures a second"
     ravi = "spaces/fakeSpace/devices/202"
-    assert late[ravi] >= 3, "Ravi (camera off, picture unchanged) is still sent, every few seconds"
+    ravi_rate = (late[ravi] - early.get(ravi, 0)) / (run["admitted_at"] + 40 - run["video_early_t"])
+    assert ravi_rate >= 1.2, f"Ravi (camera off, picture unchanged) is sent about twice a second too: {ravi_rate:.2f}"
 
 
 def test_latest_pictures_in_the_run_folder(run):
     from dockerstack import ROOT
 
     folder = ROOT / "output" / "test" / Path(run["run_dir"]).name / "camera"
-    assert {p.name for p in folder.glob("*.png")} >= {"Asha.png", "Meera.png"}
+    assert {p.name for p in folder.glob("*.png")} >= {"Asha.png", "Ravi.png", "Meera.png"}
 
 
 # ---- task 12, step 1: who spoke when (works in the default, mixed mode too) ----
@@ -322,3 +323,16 @@ def test_speaker_timeline(run):
     assert BOT_NAME not in {line["name"] for line in lines}
     for line in lines:
         assert line["id"].startswith("spaces/fakeSpace/devices/") and line["event"] in ("started", "stopped")
+
+
+# ---- task R3: captions, with the plain "Turn on captions" button (the round-2 test uses the menu version) ----
+
+def test_captions_with_the_plain_button(run):
+    from dockerstack import ROOT
+
+    folder = ROOT / "output" / "test" / Path(run["run_dir"]).name
+    assert "captions: turned on (the 'Turn on captions' button)" in (folder / "bot.log").read_text()
+    lines = [json.loads(line) for line in (folder / "captions.jsonl").read_text().splitlines()]
+    assert lines and {x["name"] for x in lines} <= {"Asha", "Ravi", "Meera"}
+    sources = {json.loads(line)["source"] for line in (folder / "speakers.jsonl").read_text().splitlines()}
+    assert sources & {"both", "captions"} and sources & {"both", "indicator"}, sources
