@@ -75,7 +75,7 @@ BODY=$(cat <<JSON
    {"type": "webhook", "url": "$RX/hooks", "events": ["participant_events.join", "participant_events.leave"]},
    {"type": "websocket", "url": "$WS/audio", "events": ["audio_separate_raw.data"]},
    {"type": "websocket", "url": "$WS/video", "events": ["video_separate_png.data"]}]},
- "xbot_options": {"per_person_audio": $PER_PERSON, "camera_pictures": $PICTURES}}
+ "xbot_options": {"per_person_audio": $PER_PERSON, "camera_pictures": $PICTURES, "save_dom": true}}
 JSON
 )
 RESP=$(curl -sS -X POST "$API/api/v1/bot/" -H "$AUTH" -H "Content-Type: application/json" -d "$BODY")

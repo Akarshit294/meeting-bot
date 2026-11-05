@@ -458,6 +458,8 @@ class InCall:
         self.webhooks = None
         self.pictures = None
         self.speakers = None
+        self.dom = None
+        self.people_changes = 0
         self.sharing_url: str | None = None
         self.share_pending: dict | None = None
         self.share_lost_logged = False
@@ -526,6 +528,15 @@ class InCall:
             self.pictures, self.speakers = extras.start(self)
         except Exception as exc:  # noqa: BLE001 - optional features must never end a call
             self.rep.log(f"extras not started: {type(exc).__name__}: {exc}")
+        if self.args.save_dom:
+            try:
+                import domdump
+
+                self.dom = domdump.DomSaver(self.page, self.rep)
+                self.dom.request("in_call_recording")
+                self.people_changes = self.people.changes if self.people else 0
+            except Exception as exc:  # noqa: BLE001
+                self.rep.log(f"dom: not started ({type(exc).__name__}: {exc})")
 
     def _click(self, target: Locator) -> None:
         human_click(self.page, target)
@@ -553,16 +564,18 @@ class InCall:
                 self.audio.tick()
             except Exception as exc:  # noqa: BLE001 - experimental: never end the call for it
                 self.rep.log(f"per-person audio tick failed: {type(exc).__name__}: {exc}")
-        for extra in (self.pictures, self.speakers):
+        if self.people and self.people.changes != self.people_changes:
+            self.people_changes = self.people.changes
+            if self.dom:
+                self.dom.request("people")
+        for name in ("pictures", "speakers", "dom"):
+            extra = getattr(self, name)
             if extra:
                 try:
                     extra.tick()
                 except Exception as exc:  # noqa: BLE001
                     self.rep.log(f"{type(extra).__name__} failed and is turned off: {type(exc).__name__}: {exc}")
-                    if extra is self.pictures:
-                        self.pictures = None
-                    else:
-                        self.speakers = None
+                    setattr(self, name, None)
         return None
 
     def _reopen_camera(self) -> Outcome | None:
@@ -642,6 +655,8 @@ class InCall:
             page.wait_for_timeout(1_000)
             self.pages.keep_below(force=True)
             self.grab_screen("share-started")
+            if self.dom:
+                self.dom.request("share_start")
             return
         if time.monotonic() - pending["since"] < SHARE_CONFIRM:
             return
@@ -671,6 +686,8 @@ class InCall:
             rep.log("screen share stopped" if not is_presenting(page) else "warning: Meet still shows the bot presenting")
             rep.snapshot(page, f"share-stopped-{int(time.time())}")
             self.grab_screen("share-stopped")
+            if self.dom:
+                self.dom.request("share_stop")
         if self.pages:
             self.pages.close_screen()
         if self.sharing_url:
@@ -705,6 +722,7 @@ class InCall:
                          ("audio", lambda: self.audio and self.audio.stop()),
                          ("pictures", lambda: self.pictures and self.pictures.stop()),
                          ("speakers", lambda: self.speakers and self.speakers.stop()),
+                         ("dom", lambda: self.dom and self.dom.stop()),
                          ("people", lambda: self.people and self.people.close()),
                          ("webhooks", lambda: self.webhooks and self.webhooks.close())):
             try:
@@ -900,6 +918,8 @@ def parse_args(argv: list[str] | None = None, environ: dict | None = None) -> ar
                         help="don't send each person's camera picture (video_separate_png.data)")
     parser.add_argument("--per-person-audio", action="store_true", default=env("PER_PERSON_AUDIO") == "1",
                         help="EXPERIMENTAL: one audio stream per person instead of one for the whole call")
+    parser.add_argument("--save-dom", action="store_true", default=env("SAVE_DOM") == "1",
+                        help="TEST: save Meet's page (HTML and accessibility tree) to dom/ at every change and every 30 s")
     args = parser.parse_args(argv)
     args.manager = None
     args.config = None
@@ -916,6 +936,9 @@ def parse_args(argv: list[str] | None = None, environ: dict | None = None) -> ar
                 args.per_person_audio = True
             if options.get("camera_pictures") is False:
                 args.no_camera_pictures = True
+            for key in ("save_dom",):
+                if options.get(key):
+                    setattr(args, key, True)
     if not args.url or urlparse(args.url).hostname != "meet.google.com" or not urlparse(args.url).path.strip("/"):
         parser.error("a meeting link like https://meet.google.com/abc-defg-hij is required")
     if args.replay_session:

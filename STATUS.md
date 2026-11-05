@@ -12,6 +12,19 @@ this VM:
 The experimental one-stream-per-person sound (`--per-person-audio`) also works there. Nothing was tried on
 real Meet: that is not allowed from this VM. Start with `MORNING.md`.
 
+## Round 2 (2026-11-05)
+
+The first real Meet test is in `evidence/real-meet-2026-11-05/`. Round 2 adds recordings to every run
+folder and fixes what that test found (`docs/PLAN.md`, ROUND 2).
+
+| Task | State | Notes |
+| --- | --- | --- |
+| R1 See the real page | done | `--save-dom` (on in `./try.sh`): `dom/NNN-<time>-<why>.html` (`page.content()`) and `.aria.yml` (`aria_snapshot()` of the body), both read in Playwright's isolated world, at `in_call_recording`, every people change, share start and stop, and every 30 s. Docker test: `tests/test_docker_round2.py` |
+| R2 Recordings | not started | |
+| R3 Captions, who spoke when, each person's sound | not started | |
+| R4 Fixes from the real test | not started | |
+| R5 Finish | not started | |
+
 ## Tasks
 
 | Task | State | Notes |

@@ -268,6 +268,7 @@ class People:
         self.open_panel = open_panel
         self.clock = clock
         self.panel_tries = 0
+        self.changes = 0  # joins and leaves so far (others watch it to react to a people change)
         self.last_read = 0.0
         self.logged: set[str] = set()
         self.source = None
@@ -318,6 +319,7 @@ class People:
                 self.logged.add(key)
                 self.rep.event("entry_seen", self_=entry.is_self or self.roster._is_self(entry), **entry.attrs)
         events = self.roster.update(read.entries, read.reliable, now)
+        self.changes += len(events)
         for kind, person in events:
             self.rep.log(f"people: {kind} {person.name!r} ({person.id}) - {self.roster.count()} other(s) in the call")
             self.rep.event(f"participant_{kind}", id=person.id, name=person.name, source=read.source)

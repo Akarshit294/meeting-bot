@@ -127,6 +127,13 @@ with Meet's real attributes, joins, leaves, screen share), a screenshot at every
 `screen-*.png` = the whole bot screen), `final-page.html` (Meet's page at the end), `camera/` (each
 person's latest picture) and `speakers.jsonl` (who spoke when).
 
+`./try.sh` also saves `dom/`: Meet's real page during the call, as `NNN-<time>-<why>.html` (the page's
+HTML) and `NNN-<time>-<why>.aria.yml` (its buttons, lists and texts). One pair at `in_call_recording`,
+at every people change (`people`), at the start and stop of a screen share (`share_start`,
+`share_stop`) and every 30 s (`every_30s`). Send the whole `dom/` folder back: it shows how Meet really
+builds its tiles, video elements, captions and speaking indicator. (Service mode saves it only with
+`--save-dom`.)
+
 | # | Check | How to see it | If it fails, send |
 | --- | --- | --- | --- |
 | 1 | The bot asks to join within about 45 s | `try.sh` prints `in_waiting_room`; Meet shows "Maya wants to join" | `bot.log`, `prejoin.png`, every `.png` in the run folder |

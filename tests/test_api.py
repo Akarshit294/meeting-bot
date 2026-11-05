@@ -166,9 +166,12 @@ def test_create_rejects_bad_json(env):
 
 def test_xbot_options_reach_the_bot_config(env):
     client, _, store, _ = env
-    bot = make(client, {"meeting_url": MEET, "xbot_options": {"per_person_audio": True, "camera_pictures": False, "x": 1}})
+    bot = make(client, {"meeting_url": MEET, "xbot_options": {"per_person_audio": True, "camera_pictures": False, "x": 1,
+                                                              "save_dom": 1, "save_media": True, "record_screen": True,
+                                                              "captions": False}})
     cfg = client.get(f"/internal/bots/{bot['id']}/config", headers={"X-Bot-Token": bot_token(store.secret, bot["id"])}).json()
-    assert cfg["options"] == {"per_person_audio": True, "camera_pictures": False}
+    assert cfg["options"] == {"per_person_audio": True, "camera_pictures": False, "save_dom": True, "save_media": True,
+                              "record_screen": True, "captions": False}
 
 
 def test_unknown_fields_are_ignored(env):

@@ -22,6 +22,8 @@ log = logging.getLogger("manager")
 
 TEST_PAGES = Path(__file__).with_name("testpages")
 WATCH_INTERVAL = 3.0
+# Our own per-bot switches (`xbot_options` in the create body; ./try.sh sends them, xebit-api never does).
+OPTION_KEYS = ("per_person_audio", "camera_pictures", "save_dom", "save_media", "record_screen", "captions")
 
 
 def safe_url(url: Any) -> str:
@@ -190,7 +192,7 @@ def create_app(settings: Settings, runner: Runner, store: Store | None = None, w
         endpoints = parse_endpoints(body.get("recording_config"))
         # Our own extension (./try.sh): per-bot switches. xebit-api never sends it.
         raw_options = body.get("xbot_options") if isinstance(body.get("xbot_options"), dict) else {}
-        options = {k: bool(raw_options[k]) for k in ("per_person_audio", "camera_pictures") if k in raw_options}
+        options = {k: bool(raw_options[k]) for k in OPTION_KEYS if k in raw_options}
         if store.active_count() >= settings.max_bots:
             raise HTTPException(status_code=429, detail=f"Too many bots: {settings.max_bots} are already running (MAX_BOTS)")
 
