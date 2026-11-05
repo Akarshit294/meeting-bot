@@ -345,7 +345,17 @@ def create_app(settings: Settings, runner: Runner, store: Store | None = None, w
         bot = store.get(bot_id)
         return f"output/{bot.run_dir}" if bot and bot.run_dir else None
 
-    app.include_router(testreceiver.router(require_key, run_dir_of))
+    def media_files_of(bot_id: str) -> str | None:
+        """The bot's list of recordings with their lengths (media-files.txt, written before `done`)."""
+        bot = store.get(bot_id)
+        if not bot or not bot.run_dir:
+            return None
+        try:
+            return (settings.output_dir / Path(bot.run_dir).name / "media-files.txt").read_text()
+        except OSError:
+            return None
+
+    app.include_router(testreceiver.router(require_key, run_dir_of, media_files_of))
 
     if TEST_PAGES.is_dir():
         app.mount("/test", StaticFiles(directory=TEST_PAGES, html=True), name="test")

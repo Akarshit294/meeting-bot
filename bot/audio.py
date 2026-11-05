@@ -157,9 +157,10 @@ class AudioStreamer:
 
     def __init__(self, url: str, bot_id: str, log: Callable[[str], None],
                  chunks: Callable[[threading.Event], Iterator[tuple[bytes, float]]] | None = None,
-                 connect=websocket.create_connection):
+                 connect=websocket.create_connection, tap: Callable[[bytes, float], None] | None = None):
         self.bot_id = bot_id
         self.log = log
+        self.tap = tap  # --save-media: every frame also goes to audio/mixed.wav
         self.socket = Socket(url, log, "audio", connect)
         self._chunks = chunks or (lambda stop: parec_chunks(stop=stop))
         self._stop = threading.Event()
@@ -178,6 +179,12 @@ class AudioStreamer:
                 for pcm, started in self._chunks(self._stop):
                     self.frames += 1
                     self.socket.send(frame(self.bot_id, pcm, started))
+                    if self.tap:
+                        try:
+                            self.tap(pcm, started)
+                        except Exception as exc:  # noqa: BLE001 - the file must never stop the stream
+                            self.log(f"audio: not saved to the file ({type(exc).__name__}: {exc})")
+                            self.tap = None
                     if time.monotonic() - last_note > 60:
                         last_note = time.monotonic()
                         self.log(f"audio: {self.socket.sent} frames sent, {self.socket.dropped} dropped while disconnected")
@@ -192,13 +199,14 @@ class AudioStreamer:
         self.log(f"audio: stopped after {self.socket.sent} frames sent, {self.socket.dropped} dropped")
 
 
-def start_for(args, cfg, url: str, rep, people=None):
-    """The audio stream for this bot: one mixed stream, or one per person with --per-person-audio."""
+def start_for(args, cfg, url: str, rep, people=None, taps=None, tap=None):
+    """The audio stream for this bot: one mixed stream, or one per person with --per-person-audio.
+    `tap` gets every mixed frame too (--save-media)."""
     if getattr(args, "per_person_audio", False):
         try:
             import per_person_audio
 
-            return per_person_audio.start(args, cfg, url, rep, people)
+            return per_person_audio.start(args, cfg, url, rep, people, taps)
         except Exception as exc:  # noqa: BLE001 - the mixed stream is the safe default
             rep.log(f"per-person audio not started ({type(exc).__name__}: {exc}); using the mixed stream")
-    return AudioStreamer(url, cfg.bot_id, rep.log).start()
+    return AudioStreamer(url, cfg.bot_id, rep.log, tap=tap).start()

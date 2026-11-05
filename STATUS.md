@@ -20,10 +20,26 @@ folder and fixes what that test found (`docs/PLAN.md`, ROUND 2).
 | Task | State | Notes |
 | --- | --- | --- |
 | R1 See the real page | done | `--save-dom` (on in `./try.sh`): `dom/NNN-<time>-<why>.html` (`page.content()`) and `.aria.yml` (`aria_snapshot()` of the body), both read in Playwright's isolated world, at `in_call_recording`, every people change, share start and stop, and every 30 s. Docker test: `tests/test_docker_round2.py` |
-| R2 Recordings | not started | |
+| R2 Recordings | done | `--save-media` (on in `./try.sh`): `audio/mixed.wav` (the frames streamed to xebit), `audio/slot-N.wav` (Meet's `<audio>` slots, from the isolated world), `video/<name>.webm` (each camera-on person's tile `<video>`, MediaRecorder in the isolated world; a new element gives `<name>-2.webm`). `--record-screen` (on in `./try.sh`): `screen.mp4` (ffmpeg x11grab, 5 frames a second). All sound files line up (silence where nothing came). `media-files.txt` lists every file with its length; `./try.sh` prints it at the end. Docker test: `tests/test_docker_round2.py` |
 | R3 Captions, who spoke when, each person's sound | not started | |
 | R4 Fixes from the real test | not started | |
 | R5 Finish | not started | |
+
+### Round 2 measurements (one bot, fake meeting, this VM: 4 CPUs)
+
+`python3 scripts/measure-cpu.py '<xbot_options>'`: `docker stats` every ~2 s for 30 s, in the call, with 3 fake
+people (2 cameras on, 320x180 at 15 frames a second) and Meet-like `<audio>` slots. 100% = one CPU core.
+
+| Options | CPU average | CPU highest | Memory |
+| --- | --- | --- | --- |
+| none (the service default: voice, sound stream, pictures, people) | 67% | 81% | 614 MiB |
+| `record_screen` | 68% | 80% | 671 MiB |
+| `save_media` (mixed, 3 slots, 2 camera files) | 71% | 85% | 662 MiB |
+| `save_media` + `record_screen` + `save_dom` (what `./try.sh` turns on) | 75% | 84% | 697 MiB |
+
+All of it fits the budget (2.5 cores, 5 GB). Real cameras are bigger than the fake ones (up to 1280x720), and
+each camera file is a VP8 encode in the bot's Chrome, so expect more on real Meet; that is why these stay
+test-only (off in service mode). Check with `docker stats` during the Round 2 test (`MORNING.md`).
 
 ## Tasks
 

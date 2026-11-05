@@ -67,6 +67,8 @@ stop_requested = False
 mouse: human_mouse.HumanMouse
 # Called before every click in Meet (service mode: keeps our own page windows under Meet's window).
 before_click = None
+# The call's service side, once admitted (so its files are closed on every way out, a crash included).
+current_call = None
 
 
 def request_stop(_signum, _frame) -> None:
@@ -460,6 +462,9 @@ class InCall:
         self.speakers = None
         self.dom = None
         self.people_changes = 0
+        self.media = None
+        self.screen_rec = None
+        self.taps = None
         self.sharing_url: str | None = None
         self.share_pending: dict | None = None
         self.share_lost_logged = False
@@ -482,19 +487,25 @@ class InCall:
         from webhooks import WebhookSender
 
         page, rep, cfg = self.page, self.rep, self.cfg
+        self._start_recordings()
         self.webhooks = WebhookSender(rep.log)
         self.people = participants.People(page, cfg, rep, self.webhooks, open_panel=self._click)
         self.people.tick(initial=True)
         if stop_requested:
             return STOPPED
 
+        if self.args.per_person_audio or self.media:
+            self._start_taps()
         audio_endpoint = cfg.endpoint_for("audio_separate_raw.data", "websocket")
         if audio_endpoint:
             import audio
 
-            self.audio = audio.start_for(self.args, cfg, audio_endpoint.url, rep, self.people)
+            self.audio = audio.start_for(self.args, cfg, audio_endpoint.url, rep, self.people, taps=self.taps,
+                                         tap=self.media.mixed if self.media else None)
         else:
             rep.log("no audio_separate_raw.data endpoint: the call's sound is not streamed")
+        if self.media and (self.audio is None or not hasattr(self.audio, "tap")):
+            self.media.record_mixed_myself()  # no mixed stream to copy: read the same sound for the file
 
         if cfg.camera_url:
             self._page_browser(cfg.camera_url)
@@ -519,6 +530,81 @@ class InCall:
         self._start_extras()
         rep.status("in_call_recording", page=page)
         return None
+
+    def _start_recordings(self) -> None:
+        """--record-screen and --save-media (test files in the run folder). Never touches the call."""
+        if self.args.record_screen:
+            try:
+                import media
+
+                if shutil.which("ffmpeg"):
+                    self.screen_rec = media.ScreenRecorder(self.rep.run_dir / "screen.mp4", self.rep.log)
+                else:
+                    self.rep.log("screen: no ffmpeg in this image, so no screen.mp4")
+            except Exception as exc:  # noqa: BLE001
+                self.rep.log(f"screen: not recorded ({type(exc).__name__}: {exc})")
+        if self.args.save_media:
+            try:
+                import media
+
+                self.media = media.MediaSaver(self.rep.run_dir, self.rep.log)
+            except Exception as exc:  # noqa: BLE001
+                self.rep.log(f"media: not saved ({type(exc).__name__}: {exc})")
+
+    def _start_taps(self) -> None:
+        """Meet's <audio> slots and each person's <video>, from an isolated world (bot/taps.py)."""
+        try:
+            import taps
+
+            self.taps = taps.MediaTaps(self.page, audio=True, video=self.media is not None)
+            if self.media and self.people:
+                self.taps.allow_video(self.people.roster.present.keys())  # cameras from the first moment
+            self.rep.log("taps: Meet's <audio> slots" + (" and each person's <video>" if self.media else "")
+                         + " are read from an isolated world")
+        except Exception as exc:  # noqa: BLE001 - per-person audio then falls back to the mixed stream
+            self.rep.log(f"taps: not started ({type(exc).__name__}: {str(exc)[:200]})")
+
+    def _tick_taps(self) -> None:
+        if not self.taps:
+            return
+        present = self.people.roster.present if self.people else {}
+        if self.media:
+            self.taps.allow_video(present.keys())
+        chunks, videos = self.taps.drain()
+        if chunks:
+            if self.audio is not None and hasattr(self.audio, "feed"):
+                self.audio.feed(chunks)
+            if self.media:
+                import taps
+
+                for chunk in chunks:
+                    self.media.slot(chunk.get("slot", 0), chunk.get("t", 0) / 1000, taps.pcm_of(chunk))
+        if self.media:
+            for message in videos:
+                self.media.video_message(message, lambda pid: present[pid].name if pid in present else None)
+
+    def _close_recordings(self) -> None:
+        if self.taps:
+            try:
+                self.taps.stop_video()
+                self.page.wait_for_timeout(1_500)  # the recorders' last pieces come back meanwhile
+            except Exception:  # noqa: BLE001 - the page may be gone
+                pass
+            try:
+                self._tick_taps()
+            except Exception as exc:  # noqa: BLE001
+                self.rep.log(f"media: last pieces lost ({type(exc).__name__}: {exc})")
+            self.taps.close()
+            self.taps = None
+        if self.media:
+            self.media.close()
+        if self.screen_rec:
+            self.screen_rec.stop()
+        if self.media or self.screen_rec:
+            import media
+
+            listing = media.write_file_list(self.rep.run_dir)
+            self.rep.log("media: files saved (media-files.txt):\n" + listing.rstrip())
 
     def _start_extras(self) -> None:
         """Task 11 and 12: camera pictures and the speaker timeline. Failures here never touch the call."""
@@ -559,6 +645,10 @@ class InCall:
             self._confirm_share()
         elif self.sharing_url:
             self._watch_share()
+        try:
+            self._tick_taps()
+        except Exception as exc:  # noqa: BLE001 - test recordings must never end the call
+            self.rep.log(f"taps tick failed: {type(exc).__name__}: {exc}")
         if self.audio is not None and hasattr(self.audio, "tick"):  # --per-person-audio
             try:
                 self.audio.tick()
@@ -723,6 +813,7 @@ class InCall:
                          ("pictures", lambda: self.pictures and self.pictures.stop()),
                          ("speakers", lambda: self.speakers and self.speakers.stop()),
                          ("dom", lambda: self.dom and self.dom.stop()),
+                         ("recordings", self._close_recordings),
                          ("people", lambda: self.people and self.people.close()),
                          ("webhooks", lambda: self.webhooks and self.webhooks.close())):
             try:
@@ -733,8 +824,9 @@ class InCall:
 
 def attend(p: Playwright, page: Page, args: argparse.Namespace, rep: Reporter, cfg: BotConfig,
            control: ControlServer | None) -> tuple[Outcome, InCall]:
+    global current_call
     rep.status("in_call_not_recording", page=page)
-    call = InCall(p, page, args, rep, cfg, control)
+    call = current_call = InCall(p, page, args, rep, cfg, control)
     if control:
         control.in_call.set()  # requests now wait for the start steps; one that waits too long is dropped
     outcome = call.start()
@@ -920,6 +1012,10 @@ def parse_args(argv: list[str] | None = None, environ: dict | None = None) -> ar
                         help="EXPERIMENTAL: one audio stream per person instead of one for the whole call")
     parser.add_argument("--save-dom", action="store_true", default=env("SAVE_DOM") == "1",
                         help="TEST: save Meet's page (HTML and accessibility tree) to dom/ at every change and every 30 s")
+    parser.add_argument("--save-media", action="store_true", default=env("SAVE_MEDIA") == "1",
+                        help="TEST: save the call's sound (audio/*.wav) and each person's camera (video/*.webm) in the run folder")
+    parser.add_argument("--record-screen", action="store_true", default=env("RECORD_SCREEN") == "1",
+                        help="TEST: record the bot's whole screen to screen.mp4 (5 frames a second)")
     args = parser.parse_args(argv)
     args.manager = None
     args.config = None
@@ -936,7 +1032,7 @@ def parse_args(argv: list[str] | None = None, environ: dict | None = None) -> ar
                 args.per_person_audio = True
             if options.get("camera_pictures") is False:
                 args.no_camera_pictures = True
-            for key in ("save_dom",):
+            for key in ("save_dom", "save_media", "record_screen"):
                 if options.get(key):
                     setattr(args, key, True)
     if not args.url or urlparse(args.url).hostname != "meet.google.com" or not urlparse(args.url).path.strip("/"):
@@ -1061,6 +1157,7 @@ def main() -> int:
             outcome = ("fatal", "bot_errored", redact(f"{type(exc).__name__}: {exc}".splitlines()[0]))
             if admitted:
                 safe_leave(page)
+            call = call or current_call
         if control:
             control.in_call.clear()
             control.fail_pending()

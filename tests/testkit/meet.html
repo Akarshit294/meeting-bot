@@ -13,6 +13,10 @@
     data-requested-participant-id / data-tile-media-id, the bot's own tile with "Backgrounds and effects",
     "Show in a tile", "More options for <name>" and "Others might still see your full video.";
   - left: "You left the meeting", "Rejoin", "Return to home screen"; removed: "You've been removed from the meeting".
+  - camera: a person with the camera on has a <video> in their tile, showing their colour with a moving dot
+    (a canvas stream, like a remote camera); a person with the camera off has an empty <video> (no stream).
+    Tiles are kept, not rebuilt, when people come and go (like real Meet); the command "recam" gives a
+    person a new <video> element.
   Query options: admit=<s> (default 2), join_at=<s> (20), leave_at=<s> (40), deny=1, audio=mix|perperson.
 -->
 <style>
@@ -62,6 +66,8 @@
   #side button { position: absolute; top: 576px; width: 44px; height: 44px; border-radius: 22px; border: 0; background: #3c4043; color: #e8eaed; font-size: 9px; }
   #call.panel #stage { right: 332px; }  /* like real Meet: the side panel makes room, it doesn't cover the tiles */
   .tile .cam { position: absolute; left: 10px; top: 10px; width: 14px; height: 14px; border-radius: 7px; background: rgba(255,255,255,.6); }
+  .tile video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .tile .nm, .tile .initial, .tile .icon, .tile .cam, .tile .selfbtn { z-index: 1; }
   #panel { position: absolute; right: 16px; top: 64px; width: 300px; bottom: 88px; background: #fff; color: #202124; border-radius: 8px; padding: 12px; overflow: auto; }
   #panel [role=listitem] { padding: 8px 4px; border-bottom: 1px solid #eee; }
   #panel .host { font-size: 11px; color: #5f6368; }
@@ -256,6 +262,30 @@ function syncBar() {
 $("cmic").onclick = () => { state.mic_on = !state.mic_on; syncBar(); log("mic " + state.mic_on); };
 $("ccam").onclick = () => { state.cam_on = !state.cam_on; syncBar(); log("cam " + state.cam_on); };
 
+// ---- cameras: each camera-on person's picture is a canvas stream (their colour, a moving dot) ----
+const cams = {};
+function camFor(p) {
+  if (!cams[p.id]) {
+    const c = document.createElement("canvas"); c.width = 320; c.height = 180;
+    cams[p.id] = { canvas: c, stream: c.captureStream(15), color: p.color };
+  }
+  return cams[p.id].stream;
+}
+setInterval(() => {
+  const x = 40 + Math.round(240 * (0.5 + 0.5 * Math.sin(performance.now() / 300)));
+  for (const id in cams) {
+    const g = cams[id].canvas.getContext("2d");
+    g.fillStyle = cams[id].color; g.fillRect(0, 0, 320, 180);
+    g.fillStyle = "rgba(255,255,255,.6)"; g.beginPath(); g.arc(x, 30, 8, 0, 7); g.fill();
+  }
+}, 66);
+function addVideo(tile, p) {
+  const old = tile.querySelector("video"); if (old) old.remove();
+  const v = document.createElement("video"); v.autoplay = true; v.muted = true; v.playsInline = true;
+  if (p.camera) { v.srcObject = camFor(p); v.play().catch(() => {}); }
+  tile.prepend(v);
+}
+
 function tileFor(p, self) {
   const t = document.createElement("div");
   t.className = "tile"; t.style.background = p.color;
@@ -268,15 +298,21 @@ function tileFor(p, self) {
       `<button class="selfbtn" style="right:8px" aria-label="More options for ${p.name}">more_vert</button>` +
       `<div class="sr">Others might still see your full video.</div>`;
   }
+  if (!self) addVideo(t, p);
   if (p.camera) t.insertAdjacentHTML("beforeend", `<div class="cam" aria-hidden="true"></div>`);
   t.insertAdjacentHTML("beforeend", `<div class="initial" aria-hidden="true" data-initial="${initial}"></div><div class="nm">${p.name}</div>` +
     `<div class="sr">${p.name}</div><div class="icon">devices</div>`);
   return t;
 }
 function render() {
-  const tiles = $("tiles"); tiles.innerHTML = "";
-  for (const p of people) tiles.appendChild(tileFor(p, false));
-  tiles.appendChild(tileFor({ id: SELF_ID, name: state.name || "You", color: "#3c4043" }, true));
+  // Like real Meet: tiles stay when others come and go; only the changed ones are added or removed.
+  const tiles = $("tiles");
+  const want = [...people.map((p) => p.id), SELF_ID];
+  for (const t of [...tiles.children]) if (!want.includes(t.dataset.participantId)) t.remove();
+  for (const p of people) {
+    if (!tiles.querySelector(`.tile[data-participant-id="${p.id}"]`)) tiles.insertBefore(tileFor(p, false), tiles.querySelector(`.tile[data-participant-id="${SELF_ID}"]`));
+  }
+  if (!tiles.querySelector(`.tile[data-participant-id="${SELF_ID}"]`)) tiles.appendChild(tileFor({ id: SELF_ID, name: state.name || "You", color: "#3c4043" }, true));
   $("count").textContent = String(people.length + 1);
   const list = $("plist"); list.innerHTML = "";
   for (const p of [{ id: SELF_ID, name: state.name, self: true }, ...people]) {
@@ -377,6 +413,10 @@ async function commands() {
       if (c.do === "add") { people.push(c.person); render(); }
       if (c.do === "remove") { const i = people.findIndex((p) => p.id === c.id); if (i >= 0) people.splice(i, 1); render(); }
       if (c.do === "admit") admit();
+      if (c.do === "recam") {
+        const p = people.find((x) => x.id === c.id), t = document.querySelector(`.tile[data-participant-id="${c.id}"]`);
+        if (p && t) addVideo(t, p);
+      }
     }
   } catch (e) {}
 }

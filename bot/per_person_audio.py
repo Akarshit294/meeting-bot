@@ -3,10 +3,8 @@
 Meet does not send one stream per person: it plays the loudest speakers through 3 `<audio>` elements
 ("slots"), and which person is in which slot changes. So, after admission only:
 
-1. The bot creates an ISOLATED world in Meet's tab (DevTools `Page.createIsolatedWorld`). Code there
-   shares the page's elements but not its JavaScript: Meet's scripts can't see it, and nothing runs in
-   Meet's page world. It hooks each `<audio>` element's stream into its own 16 kHz AudioContext and hands
-   200 ms of PCM per slot to the bot through a DevTools binding.
+1. The bot hears each slot from an ISOLATED world in Meet's tab (bot/taps.py, bot/isolated.py): nothing
+   runs in Meet's page world. 200 ms of PCM per slot comes back through a DevTools binding.
 2. Each active slot is given a name by the speaking indicator (SpeakerTimeline): a slot that is the only
    active one while exactly one person is shown speaking belongs to that person; it keeps that person
    while it stays active and that person still speaks; a new active slot goes to the one speaking person
@@ -19,59 +17,14 @@ If any of this fails to start, the bot falls back to the mixed stream (see audio
 from __future__ import annotations
 
 import base64
-import json
 import math
 import struct
 import time
 
 from audio import Socket, frame
 
-WORLD = "xbot-audio"
-BINDING = "xbotAudio"
 ACTIVE_DB = -50.0
 WAIT_CHUNKS = 5  # 1 s of a slot's sound may wait for its name
-
-HOOK_JS = r"""
-(() => {
-  if (window.__xbotAudio) return "already";
-  const S = window.__xbotAudio = { ctx: new AudioContext({ sampleRate: 16000 }), hooked: new Map(), next: 0 };
-  const CHUNK = 3200;
-  function hook(el) {
-    const stream = el.srcObject;
-    if (!stream || !(stream instanceof MediaStream) || !stream.getAudioTracks().length) return;
-    const old = S.hooked.get(el);
-    if (old && old.stream === stream) return;
-    if (old) { try { old.src.disconnect(); old.proc.disconnect(); } catch (e) {} }
-    const slot = old ? old.slot : S.next++;
-    const src = S.ctx.createMediaStreamSource(stream);
-    const proc = S.ctx.createScriptProcessor(1024, 1, 1);
-    const mute = S.ctx.createGain(); mute.gain.value = 0;
-    let buf = new Int16Array(CHUNK), n = 0, start = 0;
-    proc.onaudioprocess = (e) => {
-      const x = e.inputBuffer.getChannelData(0);
-      for (let i = 0; i < x.length; i++) {
-        if (n === 0) start = Date.now() - Math.round((x.length - i) / 16);
-        const v = Math.max(-1, Math.min(1, x[i]));
-        buf[n++] = v < 0 ? v * 32768 : v * 32767;
-        if (n === CHUNK) {
-          let s = 0; for (let k = 0; k < CHUNK; k++) s += buf[k] * buf[k];
-          const db = 10 * Math.log10(s / CHUNK / 1073741824 + 1e-12);
-          let bin = ""; const bytes = new Uint8Array(buf.buffer);
-          for (let k = 0; k < bytes.length; k += 4096) bin += String.fromCharCode.apply(null, bytes.subarray(k, k + 4096));
-          globalThis.xbotAudio(JSON.stringify({ slot, t: start, db, pcm: btoa(bin) }));
-          buf = new Int16Array(CHUNK); n = 0;
-        }
-      }
-    };
-    src.connect(proc); proc.connect(mute); mute.connect(S.ctx.destination);
-    S.hooked.set(el, { stream, src, proc, slot });
-  }
-  const scan = () => { for (const el of document.querySelectorAll("audio")) hook(el); };
-  scan(); S.timer = setInterval(scan, 1000);
-  S.ctx.resume();
-  return "hooked";
-})()
-"""
 
 
 def pcm_db(pcm: bytes) -> float:
@@ -101,8 +54,7 @@ class SlotNamer:
 
 
 class PerPersonAudio:
-    def __init__(self, page, cfg, url: str, rep, people, connect=None):
-        self.page = page
+    def __init__(self, cfg, url: str, rep, people, connect=None):
         self.cfg = cfg
         self.rep = rep
         self.people = people
@@ -117,29 +69,16 @@ class PerPersonAudio:
         self.chunks_seen = 0
         self.fallback = None
         self.last_note = time.monotonic()
-        self.cdp = page.context.new_cdp_session(page)
-        self.cdp.on("Runtime.bindingCalled", self._on_binding)
-        self.cdp.send("Runtime.enable")
-        # The binding first, so the world gets it when it is made; only that world (not Meet's) has it.
-        self.cdp.send("Runtime.addBinding", {"name": BINDING, "executionContextName": WORLD})
-        frame_id = self.cdp.send("Page.getFrameTree")["frameTree"]["frame"]["id"]
-        context = self.cdp.send("Page.createIsolatedWorld", {"frameId": frame_id, "worldName": WORLD})["executionContextId"]
-        result = self.cdp.send("Runtime.evaluate", {"expression": HOOK_JS, "contextId": context, "returnByValue": True})
-        if result.get("exceptionDetails"):
-            raise RuntimeError(f"hook failed: {result['exceptionDetails'].get('text')}")
-        rep.log("per-person audio (EXPERIMENTAL): Meet's <audio> slots hooked from an isolated world; each slot is "
+        rep.log("per-person audio (EXPERIMENTAL): Meet's <audio> slots, tapped from an isolated world; each slot is "
                 "named by the speaking indicator")
+
+    def feed(self, chunks: list[dict]) -> None:
+        """Slot sound from the tap (bot/taps.py), handed over every tick."""
+        if self.fallback is None:
+            self.pending.extend(chunks)
 
     def start(self) -> "PerPersonAudio":
         return self
-
-    def _on_binding(self, event: dict) -> None:
-        if event.get("name") != BINDING:
-            return
-        try:
-            self.pending.append(json.loads(event["payload"]))
-        except (ValueError, KeyError):
-            pass
 
     def _fall_back(self, why: str) -> None:
         """The agent must hear the call: go back to the mixed stream (v1's default)."""
@@ -202,12 +141,10 @@ class PerPersonAudio:
         if self.fallback is not None:
             self.fallback.stop()
         self.socket.close()
-        try:
-            self.cdp.detach()
-        except Exception:  # noqa: BLE001
-            pass
         self.rep.log("per-person audio: stopped; " + self.summary())
 
 
-def start(args, cfg, url: str, rep, people) -> PerPersonAudio:
-    return PerPersonAudio(people.page if people else None, cfg, url, rep, people)
+def start(args, cfg, url: str, rep, people, taps=None) -> PerPersonAudio:
+    if taps is None or not taps.audio:
+        raise RuntimeError("Meet's <audio> slots could not be tapped")
+    return PerPersonAudio(cfg, url, rep, people)
