@@ -15,7 +15,8 @@ def start(call):
         else:
             import pictures as pictures_module
 
-            pictures = pictures_module.CameraPictures(call.page, call.people, cfg.bot_id, endpoint.url, rep)
+            pictures = pictures_module.CameraPictures(call.page, call.people, cfg.bot_id, endpoint.url, rep,
+                                                      origin=call.screen_origin())
     except Exception as exc:  # noqa: BLE001 - never let this touch the call
         rep.log(f"pictures: not started ({type(exc).__name__}: {exc})")
     try:

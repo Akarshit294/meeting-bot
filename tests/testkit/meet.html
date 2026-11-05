@@ -102,9 +102,14 @@
 <div id="call" class="hidden">
   <div id="topbar"><span id="clock">9:47 AM</span> | abc-defg-hij</div>
   <button id="people" data-tooltip-id="ucc-52"><span class="sr">People</span> <span id="count">1</span></button>
-  <div id="banner" class="hidden" role="status">You are presenting to everyone <button id="stopshare">Stop presenting</button></div>
+  <!-- While presenting, like the first real test (2026-11-05): a "Stop presenting" match that is not on screen
+       comes first in the page, then the top bar's button, then one on the bot's own presentation. -->
+  <button id="stopghost" class="hidden" aria-label="Stop presenting" style="position:absolute;left:-10000px;top:40px">Stop presenting</button>
+  <div id="banner" class="hidden" role="status">Maya (You, presenting) <button id="stopshare">Stop presenting</button></div>
   <div id="stage">
-    <div id="presentation"><video id="sharevideo" muted autoplay playsinline></video></div>
+    <div id="presentation"><video id="sharevideo" muted autoplay playsinline></video>
+      <div id="selfshare" style="position:absolute;left:0;right:0;top:35%;text-align:center;color:#fff">You are presenting<br>
+        <button id="stopself" style="margin-top:8px;padding:8px 14px;border-radius:18px;border:1px solid #8ab4f8;background:#202124;color:#8ab4f8">Stop presenting</button></div></div>
     <div id="tiles"></div>
   </div>
   <div id="panel" class="hidden" aria-label="Side panel">
@@ -450,7 +455,7 @@ $("share").onclick = async () => {
   const track = shareStream.getVideoTracks()[0];
   state.share = { active: true, frames: 0, label: track.label, surface: track.getSettings().displaySurface, started: Date.now(), samples: [] };
   $("sharevideo").srcObject = shareStream;
-  $("stage").classList.add("sharing"); $("banner").classList.remove("hidden");
+  $("stage").classList.add("sharing"); $("banner").classList.remove("hidden"); $("stopghost").classList.remove("hidden");
   track.onended = () => stopShare("track ended");
   const v = $("sharevideo");
   const count = () => { if (!state.share.active) return; state.share.frames++; v.requestVideoFrameCallback(count); };
@@ -459,10 +464,12 @@ $("share").onclick = async () => {
 function stopShare(why) {
   if (shareStream) shareStream.getTracks().forEach((t) => t.stop());
   shareStream = null; state.share.active = false; state.share.stopped = why;
-  $("stage").classList.remove("sharing"); $("banner").classList.add("hidden");
+  $("stage").classList.remove("sharing"); $("banner").classList.add("hidden"); $("stopghost").classList.add("hidden");
   log("share stopped: " + why);
 }
-$("stopshare").onclick = () => stopShare("Stop presenting clicked");
+$("stopshare").onclick = () => stopShare("Stop presenting clicked (top bar)");
+$("stopself").onclick = () => stopShare("Stop presenting clicked (on the presentation)");
+$("stopghost").onclick = () => log("the off-screen Stop presenting was clicked (it does nothing)");
 function sampleShare() {
   const v = $("sharevideo");
   if (!state.share.active || !v.videoWidth) return;

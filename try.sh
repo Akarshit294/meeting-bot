@@ -106,8 +106,13 @@ SEEN=0
 LAST=""
 QUIT=0
 TICK=0
+RUNDIR=""
 while true; do
   BOT=$(curl -sS "$API/api/v1/bot/$ID/" -H "$AUTH")
+  if [ -z "$RUNDIR" ]; then
+    RUNDIR=$(curl -sS "$API/testrx/run-dir?bot=$ID" -H "$AUTH")
+    [ -n "$RUNDIR" ] && say "Run folder: $RUNDIR (logs, screenshots, recordings; filled while the bot runs)"
+  fi
   CHANGES=$(printf '%s' "$BOT" | grep -o '"code":"[a-z_]*","sub_code":[^,]*')
   COUNT=$(printf '%s\n' "$CHANGES" | grep -c '"code"')
   if [ "$COUNT" -gt "$SEEN" ]; then

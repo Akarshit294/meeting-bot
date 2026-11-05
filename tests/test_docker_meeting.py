@@ -301,14 +301,15 @@ def test_camera_pictures_rate(run):
     rate = (late[asha] - early.get(asha, 0)) / seconds
     assert 1.2 <= rate <= 2.6, f"Asha (camera on): {rate:.2f} pictures a second"
     ravi = "spaces/fakeSpace/devices/202"
-    assert late[ravi] >= 3, "Ravi (camera off, picture unchanged) is still sent, every few seconds"
+    ravi_rate = (late[ravi] - early.get(ravi, 0)) / (run["admitted_at"] + 40 - run["video_early_t"])
+    assert ravi_rate >= 1.2, f"Ravi (camera off, picture unchanged) is sent about twice a second too: {ravi_rate:.2f}"
 
 
 def test_latest_pictures_in_the_run_folder(run):
     from dockerstack import ROOT
 
     folder = ROOT / "output" / "test" / Path(run["run_dir"]).name / "camera"
-    assert {p.name for p in folder.glob("*.png")} >= {"Asha.png", "Meera.png"}
+    assert {p.name for p in folder.glob("*.png")} >= {"Asha.png", "Ravi.png", "Meera.png"}
 
 
 # ---- task 12, step 1: who spoke when (works in the default, mixed mode too) ----

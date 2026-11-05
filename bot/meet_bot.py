@@ -433,11 +433,34 @@ def turn_on_mic(page: Page, rep: Reporter) -> bool:
     return off.is_visible()
 
 
+def stop_buttons(page: Page) -> list[Locator]:
+    """Meet's "Stop presenting" buttons that are really on screen, the top bar's first (smallest y), then the
+    one on the bot's own presentation. The first real test (2026-11-05) clicked the first match in the page,
+    which was not one of these, and the share went on."""
+    buttons = page.get_by_role("button", name=STOP_SHARE)
+    viewport = getattr(mouse, "viewport", None)
+    width, height = (viewport[0], viewport[1]) if viewport else (1279, 632)
+    found = []
+    for i in range(min(buttons.count(), 8)):
+        button = buttons.nth(i)
+        try:
+            if not button.is_visible():
+                continue
+            box = button.bounding_box(timeout=1_000)
+        except PlaywrightError:
+            continue
+        if box and box["width"] >= 8 and box["height"] >= 8 and box["x"] >= 0 and box["y"] >= 0 \
+                and box["x"] + box["width"] <= width + 1 and box["y"] + box["height"] <= height + 1:
+            found.append((box["y"], box["x"], i, button))
+    return [button for *_, button in sorted(found, key=lambda f: f[:3])]
+
+
 def is_presenting(page: Page) -> bool:
     try:
-        if page.get_by_role("button", name=STOP_SHARE).first.is_visible():
+        if stop_buttons(page):
             return True
-        return bool(page.get_by_text(PRESENTING_TEXT).first.is_visible())
+        texts = page.get_by_text(PRESENTING_TEXT)
+        return any(texts.nth(i).is_visible() for i in range(min(texts.count(), 3)))
     except PlaywrightError:
         return False
 
@@ -731,7 +754,15 @@ class InCall:
                 self.rep.log(f"dom: not started ({type(exc).__name__}: {exc})")
 
     def _click(self, target: Locator) -> None:
+        """A click in Meet that may change the layout (People panel, captions, share): pictures wait for the
+        tiles to stand still again."""
+        if self.pictures:
+            self.pictures.invalidate()
         human_click(self.page, target)
+
+    def screen_origin(self) -> tuple[float, float]:
+        """Where Meet's page starts on the screen (its top-left corner, below Chrome's own bars)."""
+        return tuple(mouse.origin) if mouse.origin else (0, 0)
 
     def idle(self, ms: float) -> None:
         """Wait in the call while still reading what needs steady reading (the captions, who speaks, Meet's
@@ -752,7 +783,7 @@ class InCall:
             self._light_tick()
 
     def _light_tick(self) -> None:
-        for name in ("captions", "speakers"):
+        for name in ("pictures", "captions", "speakers"):  # pictures: where the tiles are now
             extra = getattr(self, name)
             if extra:
                 try:
@@ -795,6 +826,8 @@ class InCall:
             self.people_changes = self.people.changes
             if self.dom:
                 self.dom.request("people")
+            if self.pictures:
+                self.pictures.invalidate()  # tiles move when people come and go
         for name in ("pictures", "captions", "speakers", "dom"):
             extra = getattr(self, name)
             if extra:
@@ -838,7 +871,7 @@ class InCall:
         button = page.get_by_role("button", name=SHARE_BUTTON).first
         try:
             button.wait_for(state="visible", timeout=5_000)
-            human_click(page, button)
+            self._click(button)
         except PlaywrightError as exc:
             self.rep.log(f"no Share screen button ({type(exc).__name__})")
             return False
@@ -846,7 +879,7 @@ class InCall:
         menu = page.get_by_role("menuitem", name=SHARE_MENU_WINDOW).first
         try:
             if menu.is_visible():
-                human_click(page, menu)
+                self._click(menu)
         except PlaywrightError:
             pass
         return True
@@ -902,15 +935,28 @@ class InCall:
         page, rep = self.page, self.rep
         self.share_pending = None
         if is_presenting(page):
-            try:
-                human_click(page, page.get_by_role("button", name=STOP_SHARE).first)
-            except PlaywrightError:
-                pass
-            for _ in range(10):
+            # Confirm Meet no longer shows the bot presenting BEFORE closing the screen page (closing it would
+            # also end the share, but then Meet may show "your presentation stopped" or try again).
+            buttons = stop_buttons(page)
+            if not buttons:
+                rep.log("no 'Stop presenting' button on screen")
+            for n, button in enumerate(buttons[:3], 1):
+                try:
+                    box = button.bounding_box(timeout=1_000) or {}
+                    rep.log(f"clicking 'Stop presenting' ({'top bar' if box.get('y', 999) < 80 else 'on the presentation'}, "
+                            f"at {round(box.get('x', -1))},{round(box.get('y', -1))})")
+                    self._click(button)
+                except PlaywrightError as exc:
+                    rep.log(f"stop click {n} failed: {type(exc).__name__}")
+                for _ in range(10):
+                    if not is_presenting(page):
+                        break
+                    self.idle(500)
                 if not is_presenting(page):
                     break
-                self.idle(500)
-            rep.log("screen share stopped" if not is_presenting(page) else "warning: Meet still shows the bot presenting")
+                rep.log(f"Meet still shows the bot presenting after stop click {n}")
+            rep.log("screen share stopped (Meet no longer shows the bot presenting)" if not is_presenting(page)
+                    else "warning: Meet still shows the bot presenting; closing the screen page ends the share")
             rep.snapshot(page, f"share-stopped-{int(time.time())}")
             self.grab_screen("share-stopped")
             if self.dom:
