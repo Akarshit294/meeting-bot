@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import threading
 import time
 from typing import Callable
 
@@ -27,6 +28,7 @@ PAGE_CLASS = "xbot-pages"
 # Chrome's own bar while sharing ("<site> is sharing a window. Stop sharing / Hide"): it sits at the
 # bottom centre of the screen, on top, right over Meet's control bar.
 SHARING_BAR = (" is sharing a window", " is sharing your screen", " is sharing a tab", " is sharing this tab")
+KEEP_EVERY = 0.5  # the keeper thread lowers our windows this often
 KEEP_TITLE_JS = """title => {
     const pin = () => { if (document.title !== title) document.title = title; };
     pin();
@@ -69,6 +71,8 @@ class PageBrowser:
         self.browser = p.chromium.launch(channel=channel, headless=False, args=flags, env=env)
         self.camera_lost: str | None = None
         self._closing = False
+        self._stop_keeper = threading.Event()
+        threading.Thread(target=self._keep_below_always, name="keep-below", daemon=True).start()
         self.log(f"page browser started ({channel or 'chromium'}; the camera page plays into agent_out and hears "
                  "meet_out.monitor)")
 
@@ -148,6 +152,20 @@ class PageBrowser:
         except Exception as exc:  # noqa: BLE001 - X trouble must not break a click
             self.log(f"could not lower our windows: {exc}")
 
+    def _keep_below_always(self) -> None:
+        """Our windows (and Chrome's sharing bar) under Meet's every KEEP_EVERY seconds, on a thread and X
+        connection of their own, so it happens even while the bot's main loop is busy. In the second real test
+        (2026-11-05) the main loop was busy for 17 s just after a share started, and the shared page covered
+        Meet all that time (Chrome raises the window it starts capturing): the bot's clicks and camera
+        pictures would have hit the shared page."""
+        display = None
+        while not self._stop_keeper.wait(KEEP_EVERY):
+            try:
+                display = display or xwin.connect()
+                xwin.lower(PAGE_CLASS, SHARING_BAR, d=display)
+            except Exception:  # noqa: BLE001 - a window that went away while we looked; try again next time
+                display = None
+
     def before_click(self) -> None:
         self.keep_below(force=True)
 
@@ -156,6 +174,7 @@ class PageBrowser:
 
     def close(self) -> None:
         self._closing = True
+        self._stop_keeper.set()
         self.close_screen()
         if self.camera is not None:
             self._close_page(self.camera)

@@ -35,7 +35,11 @@ SELF_TILE = ('[aria-label*="Backgrounds and effects" i], [aria-label^="Reframe" 
 NOT_A_NAME = re.compile(
     r"^([a-z0-9]+(_[a-z0-9]+)+|devices|more_vert|mic|mic_off|videocam|videocam_off|keep|keep_off|pin|"
     r"backgrounds and effects|show in a tile|reframe|more options( for .*)?|others might still see your full video\.?|"
-    r"meeting host|you|\(you\)|presentation|presenting|.* is presenting|you are presenting|you're presenting)$",
+    r"meeting host|you|\(you\)|presentation|presenting|.* is presenting|you are presenting|you're presenting|"
+    # The buttons Meet shows over a tile under the mouse (the second real test saved camera pictures as
+    # "Pin Akarshit to your main screen"):
+    r"(un)?pin .+ (to|from) (your |the )?main screen|remove .+ from (your |the )?main screen|"
+    r".+ (to|from) your main screen)$",
     re.I,
 )
 

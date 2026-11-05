@@ -1,7 +1,8 @@
 # Who spoke when, and each person's sound
 
-Built on 2026-11-04 (task 12) and reworked on 2026-11-05 (round 2, task R3) after the first real Meet test
-showed that Meet's speaking indicator was not recognised. Tested only against the fake Meet page.
+Built on 2026-11-04 (task 12), reworked on 2026-11-05 (round 2, task R3) after the first real Meet test
+showed that Meet's speaking indicator was not recognised, and again the same day (round 3) after the second
+real test: the files per person are now made once, at the end of the call (`bot/voicefiles.py`, section 3).
 
 ## 1. Captions: who says what (`captions.jsonl`)
 
@@ -44,7 +45,8 @@ Lines: `{"t", "id", "name", "event": "started" | "stopped", "source": "captions"
 ## 3. Each person's sound (`audio/<name>.wav`, and `--per-person-audio`)
 
 Meet does not send one stream per person: it plays the loudest speakers through 3 `<audio>` elements
-("slots"), and which person is in which slot changes. Every real in-call snapshot shows exactly 3.
+("slots"). Every real in-call snapshot shows exactly 3. In the second real test (two people, 2 min) each
+person stayed in their own slot from start to end; in a bigger call Meet must move people between slots.
 
 What the bot does (all after admission, nothing in Meet's page world):
 
@@ -53,7 +55,19 @@ What the bot does (all after admission, nothing in Meet's page world):
    `<audio>` element's stream goes into that world's own 16 kHz AudioContext; 200 ms pieces come back
    through a DevTools binding only that world has. With `--save-media` they are also saved raw as
    `audio/slot-1.wav` ... `slot-3.wav`.
-2. `bot/voices.py` gives each piece to a person, 2.5 s later (captions come after the words):
+2. **The files** (`--save-media`): at the end of the call, `bot/voicefiles.py` splits each slot:
+   - each slot is cut into stretches of sound (a pause of 0.3 s ends one);
+   - a stretch is named after the person `speakers.jsonl` clearly shows talking during it (the speaking
+     indicator is on time; a span started or stopped by the captions is moved 2 s and 1 s earlier);
+   - a slot where one person has 80% of the named sound is theirs: all of its sound goes to them, also
+     from before the captions came on, and while someone else talks in another slot;
+   - in a slot shared by several people, each stretch goes to the person it is named after; an unnamed one
+     to `audio/unknown.wav`.
+   The second real test's sound, split again this way: 15 s in `Akarshit.wav` (was 2), 27 s in
+   `Subrat Parida.wav` (was 4), nothing in `unknown.wav` (was 33). Any old run folder can be split again:
+   `python3 bot/voicefiles.py output/<run folder>` (the old files go to `audio/old-split/`).
+3. **The live stream** (`--per-person-audio`): `bot/voices.py` gives each piece to a person, 2.5 s later
+   (captions come after the words):
    - the people talking around that moment are those whose captions changed from 0.2 s before to 1.5 s
      after it (or whom the indicator showed speaking);
    - a slot with sound keeps its person while that person is still talking;
@@ -61,10 +75,9 @@ What the bot does (all after admission, nothing in Meet's page world):
    - a slot with sound and no person goes to a talking person no other sounding slot has: first one whose
      new caption block starts about then (a new speaker), then the one whose caption grows most. When
      several slots start together, the loudest goes first. When it is a tie, nobody is guessed.
-3. With `--save-media`: `audio/<name>.wav` per person, and `audio/unknown.wav` for sound nobody could be
-   given. All files start at the same moment and have silence where that person said nothing, so they line
-   up with `audio/mixed.wav` and `screen.mp4`.
-4. With `--per-person-audio`: the same named pieces go to xebit as one stream per person (same frame format
+   All files start at the same moment and have silence where that person said nothing, so they line up
+   with `audio/mixed.wav` and `screen.mp4`.
+4. With `--per-person-audio`: the named pieces go to xebit as one stream per person (same frame format
    as the mixed stream, `docs/SPEC.md` 3.2, with the person's id and name, the same ids as the join/leave
    webhooks), with the time the sound was heard. Sound nobody can be given is not sent. If 10 s of sound
    can't be given to anyone, or no sound comes from the slots for 15 s, the bot goes back to the mixed
@@ -128,17 +141,18 @@ Use the Round 2 test in `MORNING.md`. In short:
 
 ## 5. Setting the indicator's class name (optional)
 
-If a real test finds the speaking indicator's class (say `abc123`, from `timeline.jsonl` or `dom/`), add
-this line to `.env`, then restart the service (new bots get it):
+The default is `speaking,.wEsLMd`: `wEsLMd` is the class Meet's tiles had while a person spoke in the second
+real test (2026-11-05; `gjg47c` while silent). Google renames such classes from time to time. If
+`speakers.jsonl` stops showing `"source": "indicator"`, find the new class in `dom/` (a class that only the
+speaking person's tile has) and add this line to `.env`, then restart the service (new bots get it):
 
 ```bash
-echo 'BOT_ENV_SPEAKING_CLASSES=abc123' >> .env
+echo 'BOT_ENV_SPEAKING_CLASSES=speaking,.abc123' >> .env
 ```
 
 ```bash
 docker compose up -d
 ```
 
-A name starting with a dot means "a tile that contains an element with this class" (for example
-`.kssMZb`, which some public bot code used in 2026; not checked here). Several names can be given,
-separated by commas. Any `BOT_ENV_<NAME>=value` line in `.env` reaches every bot as `<NAME>=value`.
+A name starting with a dot means "a tile that contains an element with this class". Several names can be
+given, separated by commas. Any `BOT_ENV_<NAME>=value` line in `.env` reaches every bot as `<NAME>=value`.

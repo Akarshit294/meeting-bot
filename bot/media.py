@@ -3,7 +3,8 @@
 `--save-media` (on in ./try.sh, off by default in service mode):
 - `audio/mixed.wav`: the whole call's sound, exactly the frames streamed to xebit (16 kHz mono);
 - `audio/slot-N.wav`: Meet's sound slots (its `<audio>` elements), raw and unnamed;
-- `audio/<name>.wav`, `audio/unknown.wav`: each person's sound (task R3, bot/voices.py);
+- `audio/<name>.wav`, `audio/unknown.wav`: each person's sound, made at the end from the slots
+  (bot/voicefiles.py);
 - `video/<name>.webm`: each person's camera (their tile's `<video>`), recorded from the isolated world.
 `--record-screen` (on in ./try.sh): `screen.mp4`, the bot's whole screen at 5 frames a second (ffmpeg).
 

@@ -1,6 +1,15 @@
 # STATUS
 
-Where the build stands: the overnight build (2026-11-04, tasks 1-12) and Round 2 (2026-11-05, R1-R5).
+Where the build stands: the overnight build (2026-11-04, tasks 1-12), Round 2 (2026-11-05, R1-R5) and
+Round 3 (2026-11-05, fixes from the second real test, made on the owner's Mac).
+
+**Round 3 in short:** the second real test (two people, `output/20261105-100440-hap-bpsr-ssg`) worked, but
+each person's sound file was nearly empty, "Stop presenting" took 27 s, and two camera pictures got a wrong
+name. Fixed: each person's sound is now split once at the end of the call (re-split of that test: 15 s in
+`Akarshit.wav` instead of 2, 27 s in `Subrat Parida.wav` instead of 4, nothing in `unknown.wav` instead of 33);
+the share stops by closing the shared window (no click); Meet's real speaking indicator is read; `bot.log`
+now shows CPU use every 30 s and every step of the bot that takes 1.5 s or more. The Round 3 test is at the
+top of `MORNING.md`.
 
 **Round 2 in short:** R1 to R5 are done and merged into `main`. Every run folder can now hold the call's
 recordings (each person's sound, each camera, the bot's whole screen), Meet's real page during the call,
@@ -17,6 +26,51 @@ this VM:
 
 The experimental one-stream-per-person sound (`--per-person-audio`) also works there. Nothing was tried on
 real Meet: that is not allowed from this VM. Start with `MORNING.md`.
+
+## Round 3 (2026-11-05): fixes from the second real test
+
+What the second real test showed (run folder `output/20261105-100440-hap-bpsr-ssg`, two people, 2 min):
+
+1. **The sound was all there; the split per person was not.** `mixed.wav` and the slot files had all the
+   speech, clean. Meet kept each person in one slot for the whole call (slot 1 = Akarshit, slot 2 = Subrat;
+   checked by comparing the voices in each slot with the parts the captions named). But the split went
+   moment by moment on the captions, which came on only 30 s after the bot got in and lagged 1-3 s: 33 of
+   37 s of speech went to `unknown.wav`.
+2. **Meet's real speaking indicator was not read.** Page snapshots in `dom/` show it: while a person speaks,
+   elements in their tile have the class `wEsLMd` (`gjg47c` while silent).
+3. **"Stop presenting" reached Meet 20 s after the bot clicked it** (the screen recording shows the pointer
+   arrive at 10:08:07; the bot clicked at 10:07:46). Just after the share started, the bot's loop was also
+   stuck for 17 s and the shared page covered Meet (Chrome raises the window it starts capturing).
+4. **Two camera pictures were named "Pin Akarshit to your main screen"** (Meet's button over a tile under
+   the mouse was read as the name).
+5. Pictures to xebit: about 0.7 a second per person on average (2 a second when the layout stands still;
+   none while Meet's layout moves). Recall sends 2 a second. The camera files: 640x360 at about 25 frames a
+   second (as Meet sends them). `screen.mp4`: 5 frames a second.
+
+What changed:
+
+| Change | Where | Test |
+| --- | --- | --- |
+| Each person's sound is split once, at the end of the call, per slot: a slot where one person has 80% of the named sound is theirs (all of it, also before the captions came on); in a slot shared by several people each stretch of sound goes to the person shown talking then. Also runs on any old run folder: `python3 bot/voicefiles.py output/<run folder>` (old files kept in `audio/old-split/`). The moment-by-moment split (`bot/voices.py`) now only feeds `--per-person-audio`. | `bot/voicefiles.py`, `bot/meet_bot.py` | `tests/test_voicefiles.py`; Docker: `test_each_person_file_carries_their_tone` |
+| Meet's speaking indicator: `SPEAKING_CLASSES` default `speaking,.wEsLMd`. A loop stuck for more than 1.5 s ends open "speaking" spans where it last saw them. | `bot/speakers.py` | `tests/test_speakers.py` |
+| The share stops by closing the screen page: Chrome ends the capture and Meet stops presenting by itself. Meet's "Stop presenting" button only if Meet still shows the bot presenting 5 s later. Our windows are kept under Meet's every 0.5 s by a thread of their own. | `bot/meet_bot.py`, `bot/pages.py`, `bot/xwin.py` | Docker: `test_the_share_stops_fast_by_closing_the_screen_page` |
+| Meet's hover buttons ("Pin X to your main screen", ...) are not names. | `bot/participants.py` | `tests/test_participants.py` |
+| `bot.log`: `usage: CPU 1.84 cores of 2.5, at the limit 12% of the time, memory 1.31 GB` every 30 s and a summary at the end (what `docker stats` shows); `slow: <step> took 6.2 s` for any step of the in-call loop that takes 1.5 s or more; `slow: a click took ...` with where the pointer really was. | `bot/usage.py`, `bot/meet_bot.py` | `tests/test_usage.py` |
+
+Only a real call can prove: that `wEsLMd` shows on real tiles at the right moments (look for
+`"source": "indicator"` in `speakers.jsonl`), that closing the window stops Meet's presentation as fast as in
+the fake, and why the loop got stuck (the `slow:` lines will say).
+
+Tests, on the owner's Mac (not the cloud VM): `pytest` 130 passed. `pytest -m docker`: 36 of 37 passed; the
+one failure was `test_pictures_twice_a_second_for_everyone` (Asha 1.37 pictures a second, the test wants
+1.4). The share stopped in 0.7 s. The old code on the same Mac did worse (0.87 pictures a second, 3 of the
+12 Round 2 tests failed).
+
+**The Mac slows itself down when hot**, and then the bot can't keep up. After the Docker tests, `pmset -g
+therm` showed `CPU_Speed_Limit = 44` (44% of full speed). A rerun of the Round 2 Docker test then had the bot
+at its CPU limit 99% of the time (21% when the Mac was cooler): 5 tests failed, and one click reached the
+screen more than 3 s late, as in the second real test. `./try.sh` now warns when the Mac runs below 80% speed.
+The real test may have been slowed the same way; the `usage:` lines in `bot.log` will show it next time.
 
 ## Round 2 (2026-11-05)
 

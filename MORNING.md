@@ -6,67 +6,51 @@ fake Meet page.
 
 Read `STATUS.md` for what was built and what is still unknown.
 
-## 0. Round 2 test (do this first)
+## 0. Round 3 test (do this first)
 
-Round 2 adds recordings to every run folder (each person's sound and camera, the bot's whole screen),
-turns Meet's captions on to learn who spoke when, and fixes what the first real test found (too few
-pictures, "Stop presenting" missed). One `./try.sh` run checks all of it. You need a second person or a
-second device (a phone) in the call, with a different name.
+Round 3 fixes what the second real test found: each person's sound file was nearly empty, "Stop
+presenting" took 27 s, two camera pictures had a wrong name. The bot also writes its CPU use into
+`bot.log` now. Same test as before: you need a second person or a second device (a phone) in the call,
+with a different name.
 
-1. Get the code and start:
-
-   ```bash
-   git checkout main && git pull
-   ```
+1. Let the Mac cool down first: a hot Mac slows its CPU and the bot can't keep up. `try.sh` warns when it
+   runs below 80% speed (`pmset -g therm` shows `CPU_Speed_Limit`; 100 is full speed). Then start (the bot
+   image rebuilds: a minute or two):
 
    ```bash
    ./try.sh https://meet.google.com/abc-defg-hij
    ```
 
-   The images rebuild the first time (ffmpeg was added): a few minutes. `try.sh` prints the **run folder**
-   (`output/<date>-<time>-<meeting code>`) as soon as the bot has one.
-2. Admit "Maya". About 5 seconds after `in_call_recording`, the bot turns captions on. Only the bot sees
-   them: open the live view link to see them at the bottom of its screen. Nobody else's Meet changes.
-3. Talk in turns, each about 10 seconds, with a short pause between turns:
-   - you, then the second person, then you again, then the second person;
-   - then both talk at the same time for about 5 seconds;
-   - then 5 seconds of silence.
-   Turn your camera on; leave the second person's camera off.
+   `try.sh` prints the **run folder** (`output/<date>-<time>-<meeting code>`) as soon as the bot has one.
+2. Admit "Maya". About 5 seconds after `in_call_recording`, the bot turns captions on (only the bot sees
+   them).
+3. Talk in turns, each about 10 seconds: you, the second person, you, the second person. Then both at the
+   same time for about 5 seconds, then 5 seconds of silence. Your camera on, theirs off. Talk in any
+   language: the split no longer depends on the captions understanding you.
 4. Press **`s`**: the clock shows as the bot's presentation. After about 10 seconds press **`x`**: the
-   presentation must stop within a few seconds (before, the bot's click missed and it only stopped when
-   the page closed).
-5. Press **`q`**. At the end `try.sh` lists every recording with its length in seconds.
+   presentation should stop within about 2 seconds.
+5. Press **`q`**. `try.sh` lists every recording with its length.
 6. Look in the run folder:
 
    | What | Where | What it should be |
    | --- | --- | --- |
+   | Each person's sound | `audio/<your name>.wav`, `audio/<other name>.wav` | All of that person's voice, from the first second, also while you both talk; nothing (or almost nothing) in `audio/unknown.wav` |
    | Whole call's sound | `audio/mixed.wav` | Everything you both said (exactly what xebit gets) |
-   | Each person's sound | `audio/<your name>.wav`, `audio/<other name>.wav` | Only that person's voice; silence while the other talks. Short bits nobody could be given are in `audio/unknown.wav` |
-   | Meet's 3 sound channels, raw | `audio/slot-1.wav` ... `slot-3.wav` | Voices, unnamed (Meet moves people between them) |
-   | Each camera | `video/<your name>.webm` | Your camera. None for the person with the camera off. Open it in Chrome (drag the file into a tab): QuickTime does not play WebM |
-   | The bot's screen | `screen.mp4` | The whole call as the bot saw it, 5 frames a second (QuickTime) |
-   | What was said | `captions.jsonl` | Your words under your names; never "You" (that is the bot itself) |
-   | Who spoke when | `speakers.jsonl` | `started`/`stopped` at your turns (`"source": "captions"`) |
-   | Pictures | `camera/<name>.png`, and `pictures sent:` in `try.sh` | One picture per person, also the camera-off one; the counts grow by about 2 a second each |
-   | Meet's real page | `dom/` | Snapshots of the page (send them back: they show how Meet really builds tiles and captions) |
-   | Stop presenting | `bot.log` | `clicking 'Stop presenting' (top bar ...)`, then `screen share stopped (Meet no longer shows the bot presenting)` |
+   | Meet's sound channels, raw | `audio/slot-1.wav` ... `slot-3.wav` | Voices, unnamed. In a small call Meet keeps each person in one slot |
+   | Who spoke when | `speakers.jsonl` | `started`/`stopped` at your turns, now mostly `"source": "indicator"` or `"both"` (Meet's speaking light) |
+   | Each camera | `video/<your name>.webm` | Your camera (open it in Chrome: QuickTime does not play WebM) |
+   | Pictures | `camera/<name>.png` | One per person, named by the person's name only |
+   | Stop presenting | `bot.log` | `screen share stopped in 1.2 s` (any number up to about 3) |
+   | CPU and memory | `bot.log` | `usage: CPU ... cores of 2.5, at the limit ...% of the time, memory ... GB` every 30 s and a summary at the end |
+   | Where the bot got stuck | `bot.log` | Lines starting with `slow:` (few or none is good) |
 
-   All sound files and `screen.mp4` start at the same moment, so they line up when played side by side.
-7. Send back the whole run folder as one file (it can be tens of MB):
+7. Tell Claude the run folder name: it reads the folder on this Mac. (To send it elsewhere:
+   `cd output && zip -r round3.zip <run folder name> && cd ..`.)
 
-   ```bash
-   cd output && zip -r round2.zip <run folder name> && cd ..
-   ```
-
-   And a few words: did each person's file hold only that person? How much went to `unknown.wav`? Did
-   the presentation stop on `x`? Was `docker stats` (CPU) fine during the call?
-
-   ```bash
-   docker stats --no-stream $(docker ps -q --filter label=meeting-bot.id)
-   ```
-
-To run without the recordings (lighter): `./try.sh --no-recordings <meet link>`. Captions can be turned off
-for a bot with `"xbot_options": {"captions": false}` in the create request.
+To split an older run's sound again with the new method: `python3 bot/voicefiles.py output/<run folder>`
+(the old files go to `audio/old-split/`). To run without the recordings (lighter):
+`./try.sh --no-recordings <meet link>`. Captions can be turned off for a bot with
+`"xbot_options": {"captions": false}` in the create request.
 
 ## 1. The one command: `./try.sh`
 

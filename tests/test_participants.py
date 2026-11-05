@@ -93,6 +93,14 @@ def test_names_from_real_tile_texts():
     assert pp.name_from_text("devices\nmore_vert") == ""
 
 
+def test_meets_hover_buttons_are_not_names():
+    # The second real test (2026-11-05) saved camera pictures as "Pin Akarshit to your main screen.png".
+    assert pp.name_from_text("Pin Akarshit to your main screen\nAkarshit") == "Akarshit"
+    assert pp.name_from_text("Unpin Subrat Parida from your main screen\nSubrat Parida") == "Subrat Parida"
+    assert pp.name_from_text("Pin Akarshit to your main screen") == ""
+    assert pp.name_from_text("Pinky Shah") == "Pinky Shah"
+
+
 def test_webhook_body_is_what_xebit_reads():
     person = pp.Person("spaces/x/devices/1", "Asha")
     body = pp.webhook_body("join", "xbot_1", person)

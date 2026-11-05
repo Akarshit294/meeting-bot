@@ -23,13 +23,18 @@ def _d():
     return _display
 
 
-def top_windows() -> Iterator:
-    root = _d().screen().root
+def connect():
+    """A new X connection, for a thread of its own (one connection must not be shared between threads)."""
+    return xdisplay.Display()
+
+
+def top_windows(d=None) -> Iterator:
+    root = (d or _d()).screen().root
     yield from root.query_tree().children
 
 
-def title(window) -> str:
-    d = _d()
+def title(window, d=None) -> str:
+    d = d or _d()
     try:
         prop = window.get_full_property(d.intern_atom("_NET_WM_NAME"), 0)
         if prop and prop.value:
@@ -75,13 +80,14 @@ def mark_shareable(title_part: str) -> bool:
     return found
 
 
-def lower(class_name: str, title_parts: tuple[str, ...] = ()) -> int:
+def lower(class_name: str, title_parts: tuple[str, ...] = (), d=None) -> int:
     """Put at the bottom of the stack every top-level window whose WM_CLASS names `class_name`, or whose
-    title contains one of `title_parts` (Chrome's own "... is sharing a window." bar)."""
-    d = _d()
+    title contains one of `title_parts` (Chrome's own "... is sharing a window." bar). `d`: the caller's own
+    X connection (another thread), else the module's."""
+    d = d or _d()
     lowered = 0
-    for w in top_windows():
-        if class_name in wm_class(w) or (title_parts and any(part in title(w) for part in title_parts)):
+    for w in top_windows(d):
+        if class_name in wm_class(w) or (title_parts and any(part in title(w, d) for part in title_parts)):
             w.configure(stack_mode=X.Below)
             lowered += 1
     d.sync()

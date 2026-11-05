@@ -6,10 +6,14 @@ Two sources, merged:
    class names are.
 2. The speaking indicator on the tiles or People-panel entries, read about 5 times a second through
    locators only: `data-speaking="true"`, an `aria-label` that says "speaking", or a class name containing
-   one of SPEAKING_CLASSES (env, default "speaking"; an entry starting with "." means "a descendant with
-   this class", e.g. ".kssMZb"). Real Meet's indicator is not known for sure yet (docs/per-person-audio.md),
-   so this source may stay silent there. Every 10 s each tile's class names go to `timeline.jsonl`
-   (`tile_classes`) to help find it.
+   one of SPEAKING_CLASSES (env, default "speaking,.wEsLMd"; an entry starting with "." means "a descendant
+   with this class"). Real Meet (page snapshots of the second real test, 2026-11-05): while a person speaks,
+   elements in their tile and People-panel entry have the class `wEsLMd` (`gjg47c` while silent). Google
+   renames such classes from time to time; the run's dom/ snapshots show the new one, and every 10 s each
+   tile's class names go to `timeline.jsonl` (`tile_classes`).
+3. If the bot was busy for more than STALL seconds between two readings (a share starting, a slow page),
+   everyone who was speaking is marked stopped where the last reading saw them: who talked meanwhile is not
+   known, and a long stall must not look like talking.
 
 Lines: {"t", "id", "name", "event": "started" | "stopped", "source": "captions" | "indicator" | "both"}.
 `id` is the participant id of the join webhook (null for a caption name that matches nobody in the roster).
@@ -24,6 +28,7 @@ import time
 from datetime import datetime, timezone
 
 EVERY = 0.2
+STALL = 1.5
 DIAGNOSE_EVERY = 10.0
 HOLD = 1.0  # a caption that stopped changing: the person stopped about 1 s later
 KEEP_HISTORY = 120.0
@@ -31,7 +36,7 @@ SPEAKING_WORD = re.compile(r"\bspeaking\b|\bis talking\b", re.I)
 
 
 def classes_hint() -> list[str]:
-    return [c.strip() for c in os.environ.get("SPEAKING_CLASSES", "speaking").split(",") if c.strip()]
+    return [c.strip() for c in os.environ.get("SPEAKING_CLASSES", "speaking,.wEsLMd").split(",") if c.strip()]
 
 
 class SpeakerTimeline:
@@ -43,6 +48,7 @@ class SpeakerTimeline:
         self.speaking: dict[str, str] = {}  # key -> source
         self.names: dict[str, str] = {}
         self.last_tick = 0.0
+        self.last_wall = 0.0
         self.last_diagnose = 0.0
         self.tile_classes: dict[str, str] = {}
         self.hints = classes_hint()
@@ -104,8 +110,9 @@ class SpeakerTimeline:
 
     # -- the timeline --
 
-    def write(self, key: str, event: str, source: str) -> None:
-        line = {"t": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+    def write(self, key: str, event: str, source: str, at: float | None = None) -> None:
+        when = datetime.fromtimestamp(at if at is not None else time.time(), timezone.utc)
+        line = {"t": when.isoformat(timespec="milliseconds"),
                 "id": None if key.startswith("name:") else key, "name": self.names.get(key, key), "event": event,
                 "source": source}
         with open(self.path, "a") as f:
@@ -116,6 +123,8 @@ class SpeakerTimeline:
         now = time.monotonic()
         if now - self.last_tick < EVERY:
             return
+        if self.last_wall and now - self.last_tick > STALL:
+            self._stalled(self.last_wall + EVERY)
         self.last_tick = now
         present = self.people.roster.present if self.people else {}
         indicator = self._read_indicator(present)
@@ -136,6 +145,7 @@ class SpeakerTimeline:
             self.speaking[key] = source
         for key in sorted(set(self.speaking) - speaking_now):
             self.write(key, "stopped", self.speaking.pop(key))
+        self.last_wall = wall
         if now - self.last_diagnose > DIAGNOSE_EVERY:
             self.last_diagnose = now
             tiles = self.page.locator("[data-participant-id]")
@@ -147,6 +157,15 @@ class SpeakerTimeline:
                         self._diagnose(tile, pid)
                 except Exception:  # noqa: BLE001
                     continue
+
+    def _stalled(self, at: float) -> None:
+        """The bot did not read for a while: end every open span where the last reading saw it (step 3)."""
+        for key in sorted(self.speaking):
+            self.write(key, "stopped", self.speaking.pop(key), at=at)
+        for spans in self.indicator_spans.values():
+            if spans and spans[-1][1] is None:
+                spans[-1][1] = at
+        self.indicator_now = set()
 
     def speaking_between(self, start: float, end: float) -> dict[str, int]:
         """Who talked between two wall-clock times: key -> how many caption changes (the indicator counts 1)."""

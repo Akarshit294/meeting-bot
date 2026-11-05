@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import re
@@ -73,6 +74,10 @@ current_call = None
 in_call_clicks = False
 # Called while the mouse moves in the call (keeps steady readings going).
 while_clicking = None
+# In the call: the bot log, for clicks that take long (human_click).
+slow_log = None
+SLOW_CLICK = 4.0
+POINTER_WAIT = 3.0
 
 
 def request_stop(_signum, _frame) -> None:
@@ -106,18 +111,43 @@ def human_click(page: Page, target: Locator) -> None:
         # there (a hidden match must not stall the call for 10 s). The movement (a second or two) runs on its
         # own thread while the bot keeps reading the captions and Meet's sound. Before admission: the proven
         # clicks, unchanged.
+        started = time.monotonic()
         rect = mouse.element_rect(page, target, inset=True, timeout=3_000)
+        found = time.monotonic() - started
         if rect:
-            mover = threading.Thread(target=mouse.click, args=(rect,), name="mouse", daemon=True)
+            arrived: list[float] = []
+            mover = threading.Thread(target=_click_and_check, args=(rect, arrived), name="mouse", daemon=True)
             mover.start()
             while mover.is_alive():
                 if while_clicking:
                     while_clicking()
                 page.wait_for_timeout(50)
+            took = time.monotonic() - started
+            if slow_log and (took > SLOW_CLICK or not arrived or arrived[0] > 0.5):
+                where = (f"the pointer got there {arrived[0]:.1f} s after the bot moved it" if arrived else
+                         f"the pointer was not there {POINTER_WAIT:g} s after the bot moved it")
+                slow_log(f"slow: a click took {took:.1f} s (finding the button {found:.1f} s; {where})")
     else:
         mouse.click_element(page, target)
     if before_click or in_call_clicks:
         nudge()  # in the call: make sure the release has reached the page
+
+
+def _click_and_check(rect: tuple, arrived: list) -> None:
+    """The mouse thread: the click, then where the X pointer really is (the second real test's "Stop
+    presenting" click reached Meet 20 s after the bot made it; this tells a late pointer from a late bot)."""
+    mouse.click(rect)
+    sent = time.monotonic()
+    x, y, w, h = rect
+    while time.monotonic() - sent < POINTER_WAIT:
+        try:
+            px, py = mouse.position()
+        except Exception:  # noqa: BLE001 - only a check
+            return
+        if x - 40 <= px <= x + w + 40 and y - 40 <= py <= y + h + 40:
+            arrived.append(time.monotonic() - sent)
+            return
+        time.sleep(0.05)
 
 
 def nudge() -> None:
@@ -413,6 +443,8 @@ SHARE_MENU_WINDOW = re.compile(r"\b(a )?window\b", re.I)
 STOP_SHARE = re.compile(r"^stop (presenting|sharing|screen ?shar)", re.I)
 PRESENTING_TEXT = re.compile(r"you('re| are) presenting", re.I)
 SHARE_CONFIRM = 10
+STOP_WAIT = 5  # seconds Meet gets to drop the presentation after the screen page closes
+SLOW_STEP = 1.5  # a step of the in-call loop that takes this long is logged ("slow: ...")
 TICK_MS = 200
 PROBE_EVERY = 1.0
 MAX_TICK_FAILURES = 40
@@ -493,20 +525,6 @@ def press_key(name: str) -> None:
     time.sleep(0.2)
 
 
-def mix(pieces: list[bytes]) -> bytes:
-    """Several 16-bit pieces played at once, as one (clipped)."""
-    if len(pieces) == 1:
-        return pieces[0]
-    import array
-
-    out = array.array("h", pieces[0])
-    for piece in pieces[1:]:
-        other = array.array("h", piece)
-        for i in range(min(len(out), len(other))):
-            out[i] = max(-32768, min(32767, out[i] + other[i]))
-    return out.tobytes()
-
-
 def safe_leave(page: Page) -> None:
     try:
         leave(page)
@@ -537,6 +555,8 @@ class InCall:
         self.share_pending: dict | None = None
         self.share_lost_logged = False
         self.camera_reopens = 0
+        self.usage = None
+        self._slow_at: dict[str, float] = {}
 
     def _page_browser(self, first_url: str):
         import pages
@@ -555,6 +575,13 @@ class InCall:
         from webhooks import WebhookSender
 
         page, rep, cfg = self.page, self.rep, self.cfg
+        try:
+            import usage
+
+            self.usage = usage.Usage(rep.log)  # CPU and memory in bot.log every 30 s (what docker stats shows)
+            self.usage.tick()
+        except Exception as exc:  # noqa: BLE001
+            rep.log(f"usage: not logged ({type(exc).__name__}: {exc})")
         self._start_recordings()
         self.webhooks = WebhookSender(rep.log)
         self.people = participants.People(page, cfg, rep, self.webhooks, open_panel=self._click, wait=self.idle)
@@ -640,12 +667,14 @@ class InCall:
             import taps
 
             self.taps = taps.MediaTaps(self.page, audio=True, video=self.media is not None)
-            import voices
+            if self.args.per_person_audio:
+                import voices
 
-            # Each slot's sound to whoever talks (R3); the speaker timeline starts a moment later.
-            self.voices = voices.VoiceSplitter(lambda a, b: self.speakers.speaking_between(a, b) if self.speakers else {},
-                                               started_between=lambda a, b: self.speakers.started_between(a, b)
-                                               if self.speakers else set())
+                # The live per-person stream: each slot's sound to whoever talks, moment by moment (R3). The
+                # files per person are made at the end instead, with hindsight (bot/voicefiles.py).
+                self.voices = voices.VoiceSplitter(
+                    lambda a, b: self.speakers.speaking_between(a, b) if self.speakers else {},
+                    started_between=lambda a, b: self.speakers.started_between(a, b) if self.speakers else set())
             if self.media and self.people:
                 self.taps.allow_video(self.people.roster.present.keys())  # cameras from the first moment
             self.rep.log("taps: Meet's <audio> slots" + (" and each person's <video>" if self.media else "")
@@ -677,34 +706,9 @@ class InCall:
                 self.media.video_message(message, lambda pid: present[pid].name if pid in present else None)
 
     def _deliver_voices(self, named: list) -> None:
-        """Slot pieces given to people (bot/voices.py): to the live per-person stream and to audio/<name>.wav."""
-        if not named:
-            return
-        if self.audio is not None and hasattr(self.audio, "deliver"):
+        """Slot pieces given to people (bot/voices.py), for the live per-person stream (--per-person-audio)."""
+        if named and self.audio is not None and hasattr(self.audio, "deliver"):
             self.audio.deliver(named)
-        if not self.media:
-            return
-        import taps
-
-        names = {p.sent_id: p.name for p in (self.people.roster.present.values() if self.people else [])}
-        if self.speakers:
-            names = {**self.speakers.names, **names}
-        unknown: list = []  # pieces nobody can be given, heard at the same moment, are mixed together
-
-        def flush_unknown():
-            if unknown:
-                self.media.person("unknown", unknown[0][0], mix([pcm for _, pcm in unknown]))
-                unknown.clear()
-
-        for key, chunk in named:
-            t, pcm = chunk.get("t", 0) / 1000, taps.pcm_of(chunk)
-            if key is None:
-                if unknown and t - unknown[0][0] > 0.1:
-                    flush_unknown()
-                unknown.append((t, pcm))
-            else:
-                self.media.person(names.get(key, key.removeprefix("name:")), t, pcm)
-        flush_unknown()
 
     def _close_recordings(self) -> None:
         if self.voices:
@@ -727,6 +731,14 @@ class InCall:
             self.taps = None
         if self.media:
             self.media.close()
+            try:
+                import voicefiles
+
+                # Each person's sound, from the slots and speakers.jsonl (written by now: speakers stopped first).
+                summary = voicefiles.split(self.media.audio_dir, self.rep.run_dir / "speakers.jsonl", self.media.t0)
+                self.rep.log(f"voices: {summary}")
+            except Exception as exc:  # noqa: BLE001 - the other files are already safe
+                self.rep.log(f"voices: no file per person ({type(exc).__name__}: {exc})")
         if self.screen_rec:
             self.screen_rec.stop()
         if self.media or self.screen_rec:
@@ -782,16 +794,31 @@ class InCall:
             self._last_light = now
             self._light_tick()
 
+    @contextlib.contextmanager
+    def _timed(self, step: str):
+        """Log a step of the loop that took SLOW_STEP seconds or more (at most once every 2 s per step): the
+        second real test had the loop stuck for 17 s after a share started, and the log could not say where."""
+        started = time.monotonic()
+        try:
+            yield
+        finally:
+            done = time.monotonic()
+            if done - started >= SLOW_STEP and done - self._slow_at.get(step, 0.0) >= 2.0:
+                self._slow_at[step] = done
+                self.rep.log(f"slow: {step} took {done - started:.1f} s")
+
     def _light_tick(self) -> None:
         for name in ("pictures", "captions", "speakers"):  # pictures: where the tiles are now
             extra = getattr(self, name)
             if extra:
                 try:
-                    extra.tick()
+                    with self._timed(name):
+                        extra.tick()
                 except Exception:  # noqa: BLE001 - the main tick reports and turns off a failing extra
                     pass
         try:
-            self._tick_taps()
+            with self._timed("taps"):
+                self._tick_taps()
         except Exception:  # noqa: BLE001
             pass
 
@@ -800,21 +827,29 @@ class InCall:
     def tick(self) -> Outcome | None:
         if self.control:
             while (command := self.control.next_command()) is not None:
-                self.handle(command)
+                with self._timed(f"the {command.action} request"):
+                    self.handle(command)
+        if self.usage:
+            self.usage.tick()
         if self.people:
-            self.people.tick()
+            with self._timed("reading the people"):
+                self.people.tick()
         if self.pages:
-            self.pages.tick()
+            with self._timed("keeping our windows below"):
+                self.pages.tick()
             if self.pages.camera_lost:
                 outcome = self._reopen_camera()
                 if outcome:
                     return outcome
         if self.share_pending:
-            self._confirm_share()
+            with self._timed("confirming the share"):
+                self._confirm_share()
         elif self.sharing_url:
-            self._watch_share()
+            with self._timed("watching the share"):
+                self._watch_share()
         try:
-            self._tick_taps()
+            with self._timed("taps"):
+                self._tick_taps()
         except Exception as exc:  # noqa: BLE001 - test recordings must never end the call
             self.rep.log(f"taps tick failed: {type(exc).__name__}: {exc}")
         if self.audio is not None and hasattr(self.audio, "tick"):  # --per-person-audio
@@ -832,7 +867,8 @@ class InCall:
             extra = getattr(self, name)
             if extra:
                 try:
-                    extra.tick()
+                    with self._timed(name) if name != "dom" else contextlib.nullcontext():  # dom logs its own time
+                        extra.tick()
                 except Exception as exc:  # noqa: BLE001
                     self.rep.log(f"{type(extra).__name__} failed and is turned off: {type(exc).__name__}: {exc}")
                     setattr(self, name, None)
@@ -932,40 +968,52 @@ class InCall:
         self.pages.close_screen()
 
     def stop_share(self) -> None:
+        """Close the screen page first: Chrome then stops capturing it and Meet stops presenting by itself, in
+        about a second, with no click. In the second real test (2026-11-05) the click on "Stop presenting"
+        reached Meet 20 s late (the mouse waited behind a busy page), so Meet's button is only the fallback."""
         page, rep = self.page, self.rep
+        started = time.monotonic()
         self.share_pending = None
-        if is_presenting(page):
-            # Confirm Meet no longer shows the bot presenting BEFORE closing the screen page (closing it would
-            # also end the share, but then Meet may show "your presentation stopped" or try again).
-            buttons = stop_buttons(page)
-            if not buttons:
-                rep.log("no 'Stop presenting' button on screen")
-            for n, button in enumerate(buttons[:3], 1):
-                try:
-                    box = button.bounding_box(timeout=1_000) or {}
-                    rep.log(f"clicking 'Stop presenting' ({'top bar' if box.get('y', 999) < 80 else 'on the presentation'}, "
-                            f"at {round(box.get('x', -1))},{round(box.get('y', -1))})")
-                    self._click(button)
-                except PlaywrightError as exc:
-                    rep.log(f"stop click {n} failed: {type(exc).__name__}")
-                for _ in range(10):
-                    if not is_presenting(page):
-                        break
-                    self.idle(500)
+        was_sharing = self.sharing_url is not None
+        if self.pages:
+            self.pages.close_screen()
+        if was_sharing:
+            for _ in range(STOP_WAIT * 2):
                 if not is_presenting(page):
                     break
-                rep.log(f"Meet still shows the bot presenting after stop click {n}")
-            rep.log("screen share stopped (Meet no longer shows the bot presenting)" if not is_presenting(page)
-                    else "warning: Meet still shows the bot presenting; closing the screen page ends the share")
+                self.idle(500)
+            if is_presenting(page):
+                rep.log(f"Meet still shows the bot presenting {STOP_WAIT} s after the screen page closed; "
+                        "clicking its 'Stop presenting'")
+                self._click_stop_presenting()
+            took = time.monotonic() - started
+            rep.log(f"screen share stopped in {took:.1f} s (Meet no longer shows the bot presenting)"
+                    if not is_presenting(page) else "warning: Meet still shows the bot presenting")
             rep.snapshot(page, f"share-stopped-{int(time.time())}")
             self.grab_screen("share-stopped")
             if self.dom:
                 self.dom.request("share_stop")
-        if self.pages:
-            self.pages.close_screen()
-        if self.sharing_url:
             rep.event("screenshare", action="stop")
         self.sharing_url = None
+
+    def _click_stop_presenting(self) -> None:
+        page, rep = self.page, self.rep
+        buttons = stop_buttons(page)
+        if not buttons:
+            rep.log("no 'Stop presenting' button on screen")
+        for n, button in enumerate(buttons[:3], 1):
+            try:
+                box = button.bounding_box(timeout=1_000) or {}
+                rep.log(f"clicking 'Stop presenting' ({'top bar' if box.get('y', 999) < 80 else 'on the presentation'}, "
+                        f"at {round(box.get('x', -1))},{round(box.get('y', -1))})")
+                self._click(button)
+            except PlaywrightError as exc:
+                rep.log(f"stop click {n} failed: {type(exc).__name__}")
+            for _ in range(10):
+                if not is_presenting(page):
+                    return
+                self.idle(500)
+            rep.log(f"Meet still shows the bot presenting after stop click {n}")
 
     def grab_screen(self, name: str) -> None:
         """The whole display (what the live view shows), and its windows: shows whether anything of
@@ -991,6 +1039,14 @@ class InCall:
     # -- the end (docs/SPEC.md 4.3 and 5.6): called AFTER call_ended is reported --
 
     def close(self) -> None:
+        if self.usage:
+            try:
+                self.usage.tick()
+                summary = self.usage.summary()
+                if summary:
+                    self.rep.log(summary)
+            except Exception:  # noqa: BLE001
+                pass
         for name, fn in (("pages", lambda: self.pages and self.pages.close()),
                          ("audio", lambda: self.audio and self.audio.stop()),
                          ("pictures", lambda: self.pictures and self.pictures.stop()),
@@ -1008,11 +1064,12 @@ class InCall:
 
 def attend(p: Playwright, page: Page, args: argparse.Namespace, rep: Reporter, cfg: BotConfig,
            control: ControlServer | None) -> tuple[Outcome, InCall]:
-    global current_call, in_call_clicks, while_clicking
+    global current_call, in_call_clicks, while_clicking, slow_log
     in_call_clicks = True
     rep.status("in_call_not_recording", page=page)
     call = current_call = InCall(p, page, args, rep, cfg, control)
     while_clicking = call.light_tick_soon
+    slow_log = rep.log
     if control:
         control.in_call.set()  # requests now wait for the start steps; one that waits too long is dropped
     outcome = call.start()

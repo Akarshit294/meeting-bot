@@ -8,8 +8,9 @@ R1 - dom/ snapshots of the page.
 R2 - the recordings: audio/mixed.wav, audio/slot-N.wav, video/<name>.webm per camera-on person (Asha gets a
      new <video> element at 30 s: Asha-2.webm), none for Ravi (camera off), screen.mp4, media-files.txt.
 R4 - pictures about twice a second for everyone (camera off too, during the screen share too) and
-     camera/<name>.png for everyone; "Stop presenting" clicked on screen and confirmed before the screen
-     page closes.
+     camera/<name>.png for everyone.
+Round 3 - the share stops by closing the screen page (Meet sees the shared window's track end), in seconds
+     and with no click; audio/<name>.wav made at the end from the slots (bot/voicefiles.py).
 R3 - captions (the "Captions and translation" version of the button; no speaking indicator, so who spoke
      when comes only from the captions): captions.jsonl, speakers.jsonl against the fake's script, and
      audio/<name>.wav carrying that person's tone.
@@ -18,6 +19,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 import subprocess
 import time
 import wave
@@ -79,7 +81,9 @@ def run():
                                       {"screenshare": {"kind": "webpage", "config": {"url": SCREEN}}}, key=key)
         time.sleep(7)
         seen["share_on"] = kit("/api/state")["share"]
+        asked = time.time()
         seen["share_stop"] = request("DELETE", f"/api/v1/bot/{bot_id}/output_media/", {"screenshare": True}, key=key)
+        seen["share_stop_took"] = time.time() - asked
         time.sleep(3)
         seen["share_off"] = kit("/api/state")["share"]
         while time.time() < admitted + 30:
@@ -325,10 +329,14 @@ def test_pictures_twice_a_second_for_everyone(run):
     assert {p.name for p in (run["dir"] / "camera").glob("*.png")} == {"Asha.png", "Ravi.png", "Meera.png"}
 
 
-def test_stop_presenting_clicks_the_real_button_and_confirms(run):
+def test_the_share_stops_fast_by_closing_the_screen_page(run):
+    # Round 3: the second real test's "Stop presenting" click reached Meet 20 s late; closing the shared window
+    # ends its track, and Meet (like the fake) stops presenting by itself.
     assert run["share_off"]["active"] is False
-    assert run["share_off"]["stopped"] == "Stop presenting clicked (top bar)", run["share_off"]
+    assert run["share_off"]["stopped"] == "track ended", run["share_off"]
+    assert run["share_stop_took"] < 8, run["share_stop_took"]
     log = (run["dir"] / "bot.log").read_text()
-    stopped = log.index("screen share stopped (Meet no longer shows the bot presenting)")
-    assert stopped < log.index("screen page closed"), "confirmed before the screen page closed"
-    assert "Meet still shows the bot presenting" not in log
+    took = re.search(r"screen share stopped in ([\d.]+) s \(Meet no longer shows the bot presenting\)", log)
+    assert took and float(took.group(1)) <= 5, log[-3000:]
+    assert log.index("screen page closed") < took.start()
+    assert "Meet still shows the bot presenting" not in log and "clicking 'Stop presenting'" not in log
