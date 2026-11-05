@@ -217,3 +217,105 @@ with the flag on, and the mixed default still passes. Then merge into `main` aga
 
 A static picture as the bot's camera (a fake video device showing the agent's name), only if it can
 be done without bringing back the fake audio device. Behind a flag, off by default.
+
+---
+
+# ROUND 2 (2026-11-05): files per person, per run
+
+Tasks 1–12 are done. Round 2 adds **recordings in every run folder**, so the owner can play back
+what the bot got from each person, and fixes what the first real test found. Same rules as before
+(`CLAUDE.md`), in particular: nothing new before admission, nothing ever runs in Meet's page world
+(isolated worlds and locators only), the join stays exactly as it is.
+
+## What the first real test showed (2026-11-05, owner's Mac)
+
+The run folders are in `evidence/real-meet-2026-11-05/` (logs, status lists, timelines, every
+screenshot; the big page dumps are left out). Read them first.
+
+1. Run 1: Google blocked the bot right after "Ask to join" (`fatal` / `google_meet_bot_blocked`).
+   Runs 2 and 3: admitted in 1–3 s. One block in three; keep watching, change nothing for it now.
+2. **Voice works:** the owner heard the chime in the call.
+3. **Screen share works:** the clock showed in the owner's Meet. But the bot's "stop" click missed
+   (`warning: Meet still shows the bot presenting`); the share ended only when the screen page
+   closed. The top bar shows `Maya (You, presenting)` + `Stop presenting`; the self-view also shows
+   a `Stop presenting` button (see `share-started-*.png`).
+4. **People:** right. The People panel lists `Contributors 3`: `Maya (You)`, `Maya — Your
+   presentation` (the bot's own share, listed as its own entry: never a person), `Akarshit —
+   Meeting host`.
+5. **Pictures:** too few (5 in about 45 s in run 2, none in run 3), and `camera/` stayed EMPTY in
+   both runs although pictures were sent. Find out why and fix it.
+6. **Who spoke when:** `speakers.jsonl` stayed empty: Meet's speaking indicator wasn't recognised.
+   Meet's class names are scrambled (`tile_classes` shows things like `oZRSLe > FKJK2b ZrmAYe`), so
+   don't rely on class names alone. In the People panel each person has a round blue "dots" icon
+   next to their name that moves when they talk (see the screenshots).
+7. Sound to xebit worked: 281 and 207 frames of 200 ms, none dropped.
+
+## Task R1 — See the real page (debug)
+
+Save what Meet's page looks like during the call, so the next real run shows the real structure
+of tiles, video elements, captions and the speaking indicator:
+
+- In `dom/` in the run folder: `page.content()` and Playwright's `aria_snapshot()` of the body, at
+  `in_call_recording`, after captions turn on (task R3), at every people change, at the start and
+  stop of a screen share, and every 30 s. Both are read in Playwright's isolated world.
+- On in `./try.sh`; a flag (`--save-dom`) in service mode, off by default.
+
+**Done when** a fake-meeting run writes them and they are listed in `MORNING.md`.
+
+## Task R2 — Recordings, in every run folder
+
+A flag `--save-media`: on in `./try.sh`, off by default in service mode (xebit gets the streams;
+files are for testing). All files land in the run folder:
+
+| File | What | How |
+| --- | --- | --- |
+| `audio/mixed.wav` | The whole call's sound, exactly what was streamed to xebit (16 kHz mono) | Write the frames you already send |
+| `audio/slot-1.wav` … `slot-3.wav` | Meet's 3 sound slots, raw, unnamed | The isolated-world tap that `--per-person-audio` already has |
+| `audio/<name>.wav` | Each person's sound | Task R3 |
+| `video/<name>.webm` | Each person's camera | Record the `<video>` element inside that person's tile from an ISOLATED world (MediaRecorder; chunks leave through a binding only that world has, the same way `bot/per_person_audio.py` does it). The tile's participant id names it. A video element that goes away and comes back starts `<name>-2.webm`. A person with the camera off gets no video file (their tile pictures stay). |
+| `screen.mp4` | The bot's whole screen, 5 frames a second | ffmpeg `x11grab` of the display. Its own flag `--record-screen`, on in `./try.sh` |
+
+- Every file must be playable on a Mac (QuickTime or a browser) when the run ends, including after
+  `q`, a removal, or a crash. Close them properly on every way out.
+- Measure the CPU of each piece with `docker stats` and write it in `STATUS.md`. Anything that
+  doesn't fit the budget (`docs/SPEC.md` 4.4) stays test-only.
+- At the end of a run, `./try.sh` lists every file saved, with its length in seconds.
+
+**Done when** a fake-meeting run with 3 people (one camera off) gives `mixed.wav`, 3 slot files, a
+video file per camera-on person with that person's colour, no video for the camera-off person,
+and `screen.mp4`, all the right length.
+
+## Task R3 — Who spoke when, from Meet's captions; each person's sound
+
+1. After admission (after the microphone and the camera page), turn on Meet's captions in English
+   with the human mouse ("Turn on captions" / the CC button). Captions show only on the bot's
+   screen; nobody else in the call sees them. Confirm they are on; if the button can't be found, log
+   it and carry on (the call must not suffer).
+2. Read the captions area through locators only: who (the name Meet shows) and what, as it
+   updates. Write `captions.jsonl` (time, name, text, and whether the line is still changing).
+3. `speakers.jsonl`: from the captions (a person starts speaking when their caption line starts or
+   grows; stops ~1 s after it stops changing), plus the People-panel indicator if you can read it
+   reliably. Match names to the roster ids.
+4. `audio/<name>.wav`: give each slot's sound, moment by moment, to the person speaking at that
+   moment (step 3). When two people speak at once, give each slot to the speaker whose caption is
+   growing and whose slot has the most sound. Sound nobody can be given goes into
+   `audio/unknown.wav`. Write in `docs/per-person-audio.md` how well this works and where it fails.
+5. `--per-person-audio` (the live stream to xebit) uses the same naming.
+
+**Done when** the fake meeting (now with a captions area that names whoever is talking, and 3
+slots with different tones) gives one file per person carrying that person's tone, and
+`captions.jsonl` and `speakers.jsonl` match the script of who talked when.
+
+## Task R4 — Fixes from the real test
+
+1. Pictures: why so few, and why `camera/` stayed empty. Fix both; pictures keep coming about twice a
+   second while a person's tile is on screen, and `camera/<name>.png` is always there.
+2. Stop presenting: click the right button (top bar `Stop presenting`, or the self-view one) and
+   confirm Meet no longer shows the bot presenting before closing the screen page.
+3. `./try.sh`: print the run folder at the start, and the file list at the end (R2).
+
+## Task R5 — Finish
+
+Fake-meeting tests for R1–R4; the whole suite green; `STATUS.md` updated (a "Round 2" section);
+`MORNING.md`: a short "Round 2 test" (one `./try.sh` run where 2 people talk in turns, with captions;
+what to listen to and look at in the run folder, and what to send back). Merge into `main`.

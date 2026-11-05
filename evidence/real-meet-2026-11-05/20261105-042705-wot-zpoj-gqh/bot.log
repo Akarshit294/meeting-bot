@@ -1,0 +1,42 @@
+[04:27:05] mouse: replaying your 40 recorded clicks
+[04:27:05] mouse: 1 recorded Meet sequences; one is replayed exactly if the layout matches
+[04:27:05] mouse: 1 older Meet sequences ignored (their clicks would miss the buttons of the latest layout capture)
+[04:27:05] control server on port 8080
+[04:27:07] input: through the VNC server (x11vnc), the path a person's live-view clicks take
+[04:27:07] STATUS joining_call - https://meet.google.com/wot-zpoj-gqh as 'Maya'
+[04:27:14] typing the name key by key through VNC, in the rhythm of your recorded typing
+[04:27:18] staying on the pre-join screen for 15 s before knocking
+[04:27:36] recorded Meet sequence not used: the pointer is no longer where the recording started
+[04:27:48] clicked "Ask to join"
+[04:27:50] STATUS in_waiting_room
+[04:27:53] STATUS in_call_not_recording
+[04:27:54] people: reading from the tiles (2 entries, Meet shows 2)
+[04:27:54] people: join 'Akarshit' (spaces/PqJMVOOuuncB/devices/294) - 1 other(s) in the call
+[04:27:55] audio: streaming the call's sound (meet_out.monitor, 16 kHz mono, 200 ms frames) as 'meeting-mix'
+[04:27:55] audio: connected to ws://manager:8090/testrx/audio
+[04:27:56] page browser started (chrome; the camera page plays into agent_out and hears meet_out.monitor)
+[04:28:00] microphone ON in Meet: the camera page will be the bot's voice
+[04:28:02] camera page open: http://manager:8090/test/voice.html
+[04:28:02] camera page console: Failed to load resource: the server responded with a status of 404 (Not Found)
+[04:28:02] camera page console: Failed to load resource: the server responded with a status of 404 (Not Found)
+[04:28:04] pictures: sending each person's camera picture about twice a second (video_separate_png.data)
+[04:28:04] speakers: writing who speaks when to speakers.jsonl
+[04:28:04] pictures: connected to ws://manager:8090/testrx/video
+[04:28:04] STATUS in_call_recording
+[04:28:05] people in the call (with the bot): 2
+[04:28:06] screen page open: http://manager:8090/test/screen.html (window found by title: True)
+[04:28:20] People panel open (clicked '2'); reading the list from it
+[04:28:21] screen share started: Meet shows the bot presenting (http://manager:8090/test/screen.html)
+[04:28:34] warning: Meet still shows the bot presenting
+[04:28:35] screen page closed
+[04:28:37] people: read failed (TimeoutError: Locator.get_attribute: Timeout 1000ms exceeded.
+Call log:
+  - waiting for get_by_role("list", name=re.compile(r"particip)
+[04:28:38] people: reading from the panel (2 entries, Meet shows 2)
+[04:28:46] leave requested by the manager
+[04:28:50] STATUS call_ended [bot_received_leave_call] - leave requested (manager, SIGINT or SIGTERM)
+[04:28:51] camera page closed
+[04:28:51] audio: stopped after 281 frames sent, 0 dropped
+[04:28:51] pictures: stopped; sent Akarshit 5; one tick takes 120 ms
+[04:28:51] speakers: stopped after 0 changes
+[04:28:51] STATUS done - artifacts in /output/20261105-042705-wot-zpoj-gqh

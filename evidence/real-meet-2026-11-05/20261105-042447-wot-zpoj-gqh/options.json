@@ -1,0 +1,58 @@
+{
+ "url": "https://meet.google.com/wot-zpoj-gqh",
+ "name": "Maya",
+ "waiting_room_timeout": 600,
+ "everyone_left_timeout": 60,
+ "max_duration": 7200,
+ "output": "/output",
+ "trace": false,
+ "dry_run": false,
+ "hold": false,
+ "mouse": "/mouse/recordings.jsonl",
+ "save_layout": false,
+ "knock_delay": 15,
+ "warmup_click": false,
+ "record_session": false,
+ "replay_session": false,
+ "replay_vnc": false,
+ "input": "vnc",
+ "type_name": true,
+ "join_only": false,
+ "camera_url": null,
+ "audio_url": null,
+ "events_url": null,
+ "meet_url": null,
+ "control_port": 8080,
+ "share_title": "xbot screen share",
+ "no_camera_pictures": false,
+ "per_person_audio": false,
+ "service": {
+  "bot_id": "xbot_d6e91302947d28fd9e2b3a78931e6989",
+  "camera_page": "http://manager:8090/test/voice.html",
+  "endpoints": [
+   {
+    "type": "webhook",
+    "url": "http://manager:8090/testrx/hooks",
+    "events": [
+     "participant_events.join",
+     "participant_events.leave"
+    ]
+   },
+   {
+    "type": "websocket",
+    "url": "ws://manager:8090/testrx/audio",
+    "events": [
+     "audio_separate_raw.data"
+    ]
+   },
+   {
+    "type": "websocket",
+    "url": "ws://manager:8090/testrx/video",
+    "events": [
+     "video_separate_png.data"
+    ]
+   }
+  ],
+  "manager": true
+ }
+}

@@ -1,0 +1,6 @@
+{"ts": "2026-11-05T04:29:21+00:00", "code": "joining_call", "sub_code": null, "message": "https://meet.google.com/wot-zpoj-gqh as 'Maya'"}
+{"ts": "2026-11-05T04:30:07+00:00", "code": "in_waiting_room", "sub_code": null, "message": ""}
+{"ts": "2026-11-05T04:30:08+00:00", "code": "in_call_not_recording", "sub_code": null, "message": ""}
+{"ts": "2026-11-05T04:30:18+00:00", "code": "in_call_recording", "sub_code": null, "message": ""}
+{"ts": "2026-11-05T04:30:45+00:00", "code": "call_ended", "sub_code": "bot_received_leave_call", "message": "leave requested (manager, SIGINT or SIGTERM)"}
+{"ts": "2026-11-05T04:30:50+00:00", "code": "done", "sub_code": null, "message": "artifacts in /output/20261105-042919-wot-zpoj-gqh"}

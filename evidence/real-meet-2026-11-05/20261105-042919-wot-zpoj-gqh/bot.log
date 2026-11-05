@@ -1,0 +1,37 @@
+[04:29:19] mouse: replaying your 40 recorded clicks
+[04:29:19] mouse: 1 recorded Meet sequences; one is replayed exactly if the layout matches
+[04:29:19] mouse: 1 older Meet sequences ignored (their clicks would miss the buttons of the latest layout capture)
+[04:29:19] control server on port 8080
+[04:29:21] input: through the VNC server (x11vnc), the path a person's live-view clicks take
+[04:29:21] STATUS joining_call - https://meet.google.com/wot-zpoj-gqh as 'Maya'
+[04:29:27] typing the name key by key through VNC, in the rhythm of your recorded typing
+[04:29:32] staying on the pre-join screen for 15 s before knocking
+[04:29:51] recorded Meet sequence not used: the pointer is no longer where the recording started
+[04:30:05] clicked "Ask to join"
+[04:30:07] STATUS in_waiting_room
+[04:30:08] STATUS in_call_not_recording
+[04:30:08] people: reading from the tiles (2 entries, Meet shows 2)
+[04:30:08] people: join 'Akarshit' (spaces/PqJMVOOuuncB/devices/294) - 1 other(s) in the call
+[04:30:08] audio: streaming the call's sound (meet_out.monitor, 16 kHz mono, 200 ms frames) as 'meeting-mix'
+[04:30:08] audio: connected to ws://manager:8090/testrx/audio
+[04:30:08] page browser started (chrome; the camera page plays into agent_out and hears meet_out.monitor)
+[04:30:13] microphone ON in Meet: the camera page will be the bot's voice
+[04:30:15] camera page open: http://manager:8090/test/voice.html
+[04:30:15] camera page console: Failed to load resource: the server responded with a status of 404 (Not Found)
+[04:30:15] camera page console: Failed to load resource: the server responded with a status of 404 (Not Found)
+[04:30:18] pictures: sending each person's camera picture about twice a second (video_separate_png.data)
+[04:30:18] speakers: writing who speaks when to speakers.jsonl
+[04:30:18] pictures: connected to ws://manager:8090/testrx/video
+[04:30:18] STATUS in_call_recording
+[04:30:18] people in the call (with the bot): 2
+[04:30:20] screen page open: http://manager:8090/test/screen.html (window found by title: True)
+[04:30:31] leave requested by the manager
+[04:30:34] clicked '3' but found no participant list; reading the video tiles instead
+[04:30:34] screen share started: Meet shows the bot presenting (http://manager:8090/test/screen.html)
+[04:30:45] STATUS call_ended [bot_received_leave_call] - leave requested (manager, SIGINT or SIGTERM)
+[04:30:49] screen page closed
+[04:30:49] camera page closed
+[04:30:49] audio: stopped after 207 frames sent, 0 dropped
+[04:30:49] pictures: stopped; sent none; one tick takes 0 ms
+[04:30:49] speakers: stopped after 0 changes
+[04:30:51] STATUS done - artifacts in /output/20261105-042919-wot-zpoj-gqh

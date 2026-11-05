@@ -1,0 +1,13 @@
+[04:24:47] mouse: replaying your 40 recorded clicks
+[04:24:47] mouse: 1 recorded Meet sequences; one is replayed exactly if the layout matches
+[04:24:47] mouse: 1 older Meet sequences ignored (their clicks would miss the buttons of the latest layout capture)
+[04:24:47] control server on port 8080
+[04:24:51] input: through the VNC server (x11vnc), the path a person's live-view clicks take
+[04:24:51] STATUS joining_call - https://meet.google.com/wot-zpoj-gqh as 'Maya'
+[04:24:58] typing the name key by key through VNC, in the rhythm of your recorded typing
+[04:25:02] staying on the pre-join screen for 15 s before knocking
+[04:25:21] recorded Meet sequence not used: the pointer is no longer where the recording started
+[04:25:34] clicked "Ask to join"
+[04:25:36] STATUS in_waiting_room
+[04:25:36] STATUS fatal [google_meet_bot_blocked] - you can't join this video call return to home screen submit feedback your meeting is safe no one can join a meeting unless invited or admitted by the host learn more 52 returning to home screen 55 sec
+[04:25:37] not reporting done: nothing but done may follow fatal
