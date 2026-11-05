@@ -21,7 +21,7 @@ folder and fixes what that test found (`docs/PLAN.md`, ROUND 2).
 | --- | --- | --- |
 | R1 See the real page | done | `--save-dom` (on in `./try.sh`): `dom/NNN-<time>-<why>.html` (`page.content()`) and `.aria.yml` (`aria_snapshot()` of the body), both read in Playwright's isolated world, at `in_call_recording`, every people change, share start and stop, and every 30 s. Docker test: `tests/test_docker_round2.py` |
 | R2 Recordings | done | `--save-media` (on in `./try.sh`): `audio/mixed.wav` (the frames streamed to xebit), `audio/slot-N.wav` (Meet's `<audio>` slots, from the isolated world), `video/<name>.webm` (each camera-on person's tile `<video>`, MediaRecorder in the isolated world; a new element gives `<name>-2.webm`). `--record-screen` (on in `./try.sh`): `screen.mp4` (ffmpeg x11grab, 5 frames a second). All sound files line up (silence where nothing came). `media-files.txt` lists every file with its length; `./try.sh` prints it at the end. Docker test: `tests/test_docker_round2.py` |
-| R3 Captions, who spoke when, each person's sound | not started | |
+| R3 Captions, who spoke when, each person's sound | done | After the microphone and the camera page the bot turns Meet's captions on with the human mouse (both button versions: "Turn on captions", and "Captions and translation" with its switch; then the `c` key; else it logs and carries on). `captions.jsonl` (read with locators: the "Captions" region's text and its avatars' names), `speakers.jsonl` from the captions plus the indicator, `audio/<name>.wav` and `audio/unknown.wav` from Meet's slots (`bot/voices.py`); `--per-person-audio` uses the same naming. Fake meeting: 98% of each person's file is their tone. See `docs/per-person-audio.md` |
 | R4 Fixes from the real test | not started | |
 | R5 Finish | not started | |
 
@@ -234,6 +234,21 @@ Read in Chromium's source (tags 120 to 145) and checked in the bot image:
 ## Decisions
 
 (Each one: what was unclear, what was chosen, why.)
+
+Round 2:
+
+- **Captions are on by default in service mode** (`--no-captions` / `"captions": false` turns them off). The
+  plan asks for them after admission; they show only on the bot's screen, and they are the only reliable
+  "who spoke when" so far. If they can't be turned on, nothing else changes.
+- **In the call, a click aims at the middle of the button** (the box shrunk by a quarter on each side) and
+  waits at most 3 s for the button. Found in the fake meeting: the recorded click positions can land in the
+  cut-off corner of a round or pill-shaped button, which then hits what is behind it; Meet's buttons are
+  round. The movement itself runs on its own thread while the bot keeps reading captions and sound. Before
+  admission nothing changed (the proven join).
+- **Per-person sound is named 2.5 s late** (captions come after the words), with the time it was heard.
+- **The fake meeting's slots always carry a stream** (silence when nobody talks): a slot with no source at
+  all for a moment made Chrome play it 10% slow afterwards in the fake, which never happens with Meet's
+  WebRTC slots.
 
 - **Browser A (Meet) in service mode drops `--use-fake-ui-for-media-stream` too**, not only the fake
   device flags. Reason: with that flag Chrome skips the screen picker and captures the whole screen, so

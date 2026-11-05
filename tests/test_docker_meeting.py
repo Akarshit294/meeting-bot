@@ -322,3 +322,16 @@ def test_speaker_timeline(run):
     assert BOT_NAME not in {line["name"] for line in lines}
     for line in lines:
         assert line["id"].startswith("spaces/fakeSpace/devices/") and line["event"] in ("started", "stopped")
+
+
+# ---- task R3: captions, with the plain "Turn on captions" button (the round-2 test uses the menu version) ----
+
+def test_captions_with_the_plain_button(run):
+    from dockerstack import ROOT
+
+    folder = ROOT / "output" / "test" / Path(run["run_dir"]).name
+    assert "captions: turned on (the 'Turn on captions' button)" in (folder / "bot.log").read_text()
+    lines = [json.loads(line) for line in (folder / "captions.jsonl").read_text().splitlines()]
+    assert lines and {x["name"] for x in lines} <= {"Asha", "Ravi", "Meera"}
+    sources = {json.loads(line)["source"] for line in (folder / "speakers.jsonl").read_text().splitlines()}
+    assert sources & {"both", "captions"} and sources & {"both", "indicator"}, sources

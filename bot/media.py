@@ -246,7 +246,8 @@ class MediaSaver:
         self.own_reader: threading.Thread | None = None
         self._stop = threading.Event()
         self.closed = False
-        log("media: saving the call's sound to audio/ and each person's camera to video/")
+        log(f"media: saving the call's sound to audio/ and each person's camera to video/ (all files start at "
+            f"{self.t0:.3f}, wall clock)")
 
     # -- sound --
 

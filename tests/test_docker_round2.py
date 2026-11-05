@@ -7,6 +7,9 @@ for a few seconds, then leaves at about 52 s. Then the run folder is checked:
 R1 - dom/ snapshots of the page.
 R2 - the recordings: audio/mixed.wav, audio/slot-N.wav, video/<name>.webm per camera-on person (Asha gets a
      new <video> element at 30 s: Asha-2.webm), none for Ravi (camera off), screen.mp4, media-files.txt.
+R3 - captions (the "Captions and translation" version of the button; no speaking indicator, so who spoke
+     when comes only from the captions): captions.jsonl, speakers.jsonl against the fake's script, and
+     audio/<name>.wav carrying that person's tone.
 """
 from __future__ import annotations
 
@@ -27,6 +30,8 @@ pytestmark = pytest.mark.docker
 MEET = "https://meet.google.com/abc-defg-hij"
 BOT_NAME = "Maya Test"
 SCREEN = "http://testkit:9000/screen.html?session_id=s1&token=SECRET2"
+MEET_PAGE = "http://testkit:9000/meet/abc-defg-hij?audio=perperson&cc=b&indicator=0"
+TONES = {"Asha": 440, "Ravi": 660, "Meera": 880}
 
 
 def epoch(iso: str) -> float:
@@ -41,7 +46,7 @@ def kit(path, body=None):
 
 @pytest.fixture(scope="module")
 def run():
-    compose("up", "-d", "--build", env={"TEST_MEET_URL": "http://testkit:9000/meet/abc-defg-hij?audio=perperson"})
+    compose("up", "-d", "--build", env={"TEST_MEET_URL": MEET_PAGE})
     wait_http(API + "/health")
     wait_http(TESTKIT + "/health")
     key = api_key()
@@ -110,7 +115,7 @@ def test_dom_snapshots(run):
     aria = sorted(folder.glob("*.aria.yml"))
     assert html and len(html) == len(aria), (html, aria)
     reasons = " ".join(p.stem for p in html)
-    for why in ("in_call_recording", "people", "share_start", "share_stop", "every_30s"):
+    for why in ("in_call_recording", "captions_on", "people", "share_start", "share_stop", "every_30s"):
         assert why in reasons, f"no snapshot for {why}: {reasons}"
     first = html[0].read_text()
     assert "data-participant-id" in first and "Leave call" in first
@@ -217,3 +222,80 @@ def test_file_list_with_lengths(run):
     for name in ("audio/mixed.wav", "audio/slot-1.wav", "video/Asha.webm", "video/Meera.webm", "screen.mp4"):
         line = next(line for line in listed.splitlines() if line.startswith(name + "  "))
         assert line.endswith(" s") and float(line.split()[-2]) > 5, line
+
+
+# ---- R3: captions, who spoke when, each person's sound ----
+
+def jsonl(path: Path) -> list[dict]:
+    return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+
+
+def test_captions_turned_on_with_the_menu_version(run):
+    log = (run["dir"] / "bot.log").read_text()
+    assert "captions: turned on (the 'Captions and translation' menu)" in log, log[-3000:]
+    assert run["meet_state"]["captions_on"] is True
+
+
+def test_captions_jsonl_matches_what_meet_showed(run):
+    lines = jsonl(run["dir"] / "captions.jsonl")
+    assert lines
+    assert {x["name"] for x in lines} <= {"Asha", "Ravi", "Meera"}, "never the bot's own 'You'"
+    assert {x["name"] for x in lines} >= {"Asha", "Ravi"}
+    shown = {(name, text) for _, name, text in run["meet_state"]["caption_log"]}
+    finals = [x for x in lines if not x["changing"]]
+    assert finals and any(x["changing"] for x in lines)
+    ids = {h["body"]["data"]["data"]["participant"]["name"]: h["body"]["data"]["data"]["participant"]["id"]
+           for h in run["hooks"] if h["body"]["event"] == "participant_events.join"}
+    for x in lines:
+        assert x["id"] == ids[x["name"]], "the same ids as the join webhooks"
+    growing = [x for x in lines if x["changing"]]
+    matched = sum((x["name"], x["text"]) in shown for x in growing)
+    assert matched >= 0.9 * len(growing), f"{matched}/{len(growing)} caption texts are what the page showed"
+
+
+def turns(run) -> list[tuple[str, float, float]]:
+    """The fake meeting's script: (name, voice on, voice off), wall clock."""
+    names = {"spaces/fakeSpace/devices/201": "Asha", "spaces/fakeSpace/devices/202": "Ravi",
+             "spaces/fakeSpace/devices/203": "Meera"}
+    out, open_ = [], {}
+    for t, pid, on in run["meet_state"]["speak_log"]:
+        if on:
+            open_[pid] = t / 1000
+        elif pid in open_:
+            out.append((names[pid], open_.pop(pid), t / 1000))
+    return out
+
+
+def test_speakers_follow_the_script(run):
+    lines = jsonl(run["dir"] / "speakers.jsonl")
+    assert lines and all(x["source"] == "captions" for x in lines), "no indicator in this run: captions only"
+    starts = [(x["name"], epoch(x["t"])) for x in lines if x["event"] == "started"]
+    stops = [(x["name"], epoch(x["t"])) for x in lines if x["event"] == "stopped"]
+    checked = ok = 0
+    # Turns from when the bot first read the captions area on (its first captions.jsonl line or speaker line).
+    first = jsonl(run["dir"] / "captions.jsonl")[:1] + lines[:1]
+    begin = min(epoch(x["t"]) for x in first) + 0.5
+    for name, on, off in turns(run):
+        if on < begin or off > run["left_at"] - 2:
+            continue
+        checked += 1
+        started = any(n == name and on <= t <= on + 1.5 for n, t in starts)
+        stopped = any(n == name and off <= t <= off + 2.5 for n, t in stops)
+        ok += started and stopped
+    assert checked >= 8 and ok >= checked - 1, f"{ok} of {checked} turns found in speakers.jsonl: {lines[:6]}"
+
+
+def test_each_person_file_carries_their_tone(run):
+    audio = run["dir"] / "audio"
+    for name, tone in TONES.items():
+        samples = wav(audio / f"{name}.wav")
+        pieces = [samples[i:i + 3200] for i in range(0, len(samples) - 3200, 3200)]
+        loud = [p for p in pieces if np.sqrt(np.mean(p ** 2)) >= 300]
+        assert len(loud) >= 10, f"{name}: only {len(loud)} loud pieces"
+        right = 0
+        for piece in loud:
+            spec = np.abs(np.fft.rfft(piece * np.hanning(len(piece))))
+            right += abs(np.fft.rfftfreq(len(piece), 1 / 16000)[spec.argmax()] - tone) <= 15
+        assert right >= 0.85 * len(loud), f"{name}: {right} of {len(loud)} pieces are {tone} Hz"
+        mixed = wav(audio / "mixed.wav")
+        assert abs(len(samples) - len(mixed)) / 16000 < 1.5, "lines up with the other files"

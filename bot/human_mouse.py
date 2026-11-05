@@ -160,14 +160,28 @@ class HumanMouse:
     def move_to(self, x: float, y: float) -> None:
         self._play([(0.0, "move", x, y)])
 
-    def click_element(self, page, locator) -> bool:
-        locator.scroll_into_view_if_needed(timeout=10_000)
-        box = locator.bounding_box(timeout=10_000)
-        if not box:
+    def click_element(self, page, locator, inset: bool = False, timeout: float = 10_000) -> bool:
+        """Click an element with recorded human movement. `inset` (in the call only): aim at the middle of
+        the element, so a click never lands in the cut-off corner of a round or pill-shaped button (the box
+        is square, the button is not: a corner click hits what is behind it)."""
+        rect = self.element_rect(page, locator, inset, timeout)
+        if not rect:
             return False
-        left, top = self.origin or page.evaluate(VIEWPORT_ORIGIN_JS)
-        self.click((left + box["x"], top + box["y"], box["width"], box["height"]))
+        self.click(rect)
         return True
+
+    def element_rect(self, page, locator, inset: bool = False, timeout: float = 10_000):
+        """Where on the screen to click an element: (x, y, width, height), or None."""
+        locator.scroll_into_view_if_needed(timeout=timeout)
+        box = locator.bounding_box(timeout=timeout)
+        if not box:
+            return None
+        left, top = self.origin or page.evaluate(VIEWPORT_ORIGIN_JS)
+        x, y, w, h = left + box["x"], top + box["y"], box["width"], box["height"]
+        if inset:
+            dx, dy = min(w * 0.25, h * 0.35), h * 0.25
+            x, y, w, h = x + dx, y + dy, w - 2 * dx, h - 2 * dy
+        return x, y, w, h
 
     def position(self) -> tuple[int, int]:
         pointer = self._connect().screen().root.query_pointer()

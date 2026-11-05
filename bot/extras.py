@@ -22,8 +22,6 @@ def start(call):
         import speakers as speakers_module
 
         speakers = speakers_module.SpeakerTimeline(call.page, call.people, rep)
-        if call.audio is not None and hasattr(call.audio, "speakers"):
-            call.audio.speakers = speakers  # --per-person-audio names Meet's slots by who is speaking
     except Exception as exc:  # noqa: BLE001
         rep.log(f"speakers: not started ({type(exc).__name__}: {exc})")
     return pictures, speakers
