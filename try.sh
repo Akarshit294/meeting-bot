@@ -54,14 +54,10 @@ if ! docker info >/dev/null 2>&1; then
   echo "Docker is not running. Start Docker Desktop, wait until it says it is running, then run this again."
   exit 1
 fi
-# A hot Mac slows its CPU down (2026-11-05: to 44% after the Docker tests). The bot then can't keep up:
-# clicks arrive seconds late, pictures and captions thin out. Say so before blaming the bot.
-SPEED=$(pmset -g therm 2>/dev/null | awk '/CPU_Speed_Limit/ {print $3}')
-if [ -n "$SPEED" ] && [ "$SPEED" -lt 80 ] 2>/dev/null; then
-  echo "Warning: this Mac is hot and runs at ${SPEED}% of its CPU speed (pmset -g therm). The bot may be slow."
-  echo "For a fair test, let the Mac cool down until 'pmset -g therm' shows CPU_Speed_Limit = 100."
-fi
-echo "Starting the service (docker compose up -d --build). The first time takes about 5-10 minutes."
+# --build rebuilds only what changed: our code, a few seconds. The rest (Chrome, ffmpeg, ...) comes from
+# Docker's cache. The Python base is pinned in the Dockerfiles, so a Docker Hub update can't empty that
+# cache any more (it did on 2026-11-05: a 7-minute rebuild).
+echo "Starting the service (docker compose up -d --build): a few seconds; about 7 minutes on the very first build."
 if ! docker compose up -d --build; then
   echo "The service did not build or start. Send the output above."
   exit 1
@@ -70,6 +66,14 @@ for _ in $(seq 60); do curl -fsS "$API/health" >/dev/null 2>&1 && break; sleep 1
 if ! curl -fsS "$API/health" >/dev/null 2>&1; then
   echo "The service is not answering on $API. Send the output of: docker compose logs manager"
   exit 1
+fi
+# A hot Mac slows its CPU down (2026-11-05: to 44% after the Docker tests). The bot then can't keep up:
+# clicks arrive seconds late, pictures and captions thin out. Say so before blaming the bot.
+# Checked after the build, which can be what heated it.
+SPEED=$(pmset -g therm 2>/dev/null | awk '/CPU_Speed_Limit/ {print $3}')
+if [ -n "$SPEED" ] && [ "$SPEED" -lt 80 ] 2>/dev/null; then
+  echo "Warning: this Mac is hot and runs at ${SPEED}% of its CPU speed (pmset -g therm). The bot may be slow."
+  echo "For a fair test, let the Mac cool down until 'pmset -g therm' shows CPU_Speed_Limit = 100."
 fi
 
 # 3. The bot. The bot containers reach the manager as http://manager:8090.

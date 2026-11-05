@@ -14,8 +14,8 @@ presenting" took 27 s, two camera pictures had a wrong name. The bot also writes
 with a different name.
 
 1. Let the Mac cool down first: a hot Mac slows its CPU and the bot can't keep up. `try.sh` warns when it
-   runs below 80% speed (`pmset -g therm` shows `CPU_Speed_Limit`; 100 is full speed). Then start (the bot
-   image rebuilds: a minute or two):
+   runs below 80% speed (`pmset -g therm` shows `CPU_Speed_Limit`; 100 is full speed). Then start (the build
+   step takes seconds; only what changed is rebuilt):
 
    ```bash
    ./try.sh https://meet.google.com/abc-defg-hij

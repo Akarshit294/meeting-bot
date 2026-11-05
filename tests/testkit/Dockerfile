@@ -1,10 +1,12 @@
 # syntax=docker/dockerfile:1.7
 # The test kit: fake meeting page + test receiver (tests only). Build context: the repo root.
 ARG NET=direct
+# The Python base, pinned (why, and how to update it: bot/Dockerfile). Keep the three Dockerfiles the same.
+ARG BASE=python:3.12-slim-bookworm@sha256:da54eb86849fe19be7584d8b3f291fcf0c53c196760ab3d70dc6382f681ef9c0
 
-FROM python:3.12-slim-bookworm AS net-direct
+FROM ${BASE} AS net-direct
 
-FROM python:3.12-slim-bookworm AS net-proxy
+FROM ${BASE} AS net-proxy
 COPY --from=proxyca agent-proxy-ca.crt /usr/local/share/ca-certificates/build-proxy.crt
 RUN update-ca-certificates
 ENV PIP_CERT=/etc/ssl/certs/ca-certificates.crt

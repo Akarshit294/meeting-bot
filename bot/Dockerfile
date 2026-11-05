@@ -7,10 +7,16 @@
 #         adds that proxy's CA certificate. Needs `--build-context proxyca=<dir with agent-proxy-ca.crt>`,
 #         `--network host` and the https_proxy build arg. The Mac never builds this stage.
 ARG NET=direct
+# The Python base, pinned to one exact build of python:3.12-slim-bookworm (the one Docker Hub had on
+# 2026-11-05). Docker Hub replaces what that name points to every few weeks; unpinned, the first build after
+# such a change rebuilt everything (here: Chrome and all, 7 minutes) instead of taking seconds.
+# The same line is in bot/, manager/ and tests/testkit/. To move to a newer base on purpose, put the top
+# "Digest:" of `docker buildx imagetools inspect python:3.12-slim-bookworm` in all three.
+ARG BASE=python:3.12-slim-bookworm@sha256:da54eb86849fe19be7584d8b3f291fcf0c53c196760ab3d70dc6382f681ef9c0
 
-FROM python:3.12-slim-bookworm AS net-direct
+FROM ${BASE} AS net-direct
 
-FROM python:3.12-slim-bookworm AS net-proxy
+FROM ${BASE} AS net-proxy
 COPY --from=proxyca agent-proxy-ca.crt /usr/local/share/ca-certificates/build-proxy.crt
 RUN sed -i 's#http://deb.debian.org#https://deb.debian.org#g' /etc/apt/sources.list.d/debian.sources \
  && update-ca-certificates
