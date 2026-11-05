@@ -6,6 +6,68 @@ fake Meet page.
 
 Read `STATUS.md` for what was built and what is still unknown.
 
+## 0. Round 2 test (do this first)
+
+Round 2 adds recordings to every run folder (each person's sound and camera, the bot's whole screen),
+turns Meet's captions on to learn who spoke when, and fixes what the first real test found (too few
+pictures, "Stop presenting" missed). One `./try.sh` run checks all of it. You need a second person or a
+second device (a phone) in the call, with a different name.
+
+1. Get the code and start:
+
+   ```bash
+   git checkout main && git pull
+   ```
+
+   ```bash
+   ./try.sh https://meet.google.com/abc-defg-hij
+   ```
+
+   The images rebuild the first time (ffmpeg was added): a few minutes. `try.sh` prints the **run folder**
+   (`output/<date>-<time>-<meeting code>`) as soon as the bot has one.
+2. Admit "Maya". About 5 seconds after `in_call_recording`, the bot turns captions on. Only the bot sees
+   them: open the live view link to see them at the bottom of its screen. Nobody else's Meet changes.
+3. Talk in turns, each about 10 seconds, with a short pause between turns:
+   - you, then the second person, then you again, then the second person;
+   - then both talk at the same time for about 5 seconds;
+   - then 5 seconds of silence.
+   Turn your camera on; leave the second person's camera off.
+4. Press **`s`**: the clock shows as the bot's presentation. After about 10 seconds press **`x`**: the
+   presentation must stop within a few seconds (before, the bot's click missed and it only stopped when
+   the page closed).
+5. Press **`q`**. At the end `try.sh` lists every recording with its length in seconds.
+6. Look in the run folder:
+
+   | What | Where | What it should be |
+   | --- | --- | --- |
+   | Whole call's sound | `audio/mixed.wav` | Everything you both said (exactly what xebit gets) |
+   | Each person's sound | `audio/<your name>.wav`, `audio/<other name>.wav` | Only that person's voice; silence while the other talks. Short bits nobody could be given are in `audio/unknown.wav` |
+   | Meet's 3 sound channels, raw | `audio/slot-1.wav` ... `slot-3.wav` | Voices, unnamed (Meet moves people between them) |
+   | Each camera | `video/<your name>.webm` | Your camera. None for the person with the camera off. Open it in Chrome (drag the file into a tab): QuickTime does not play WebM |
+   | The bot's screen | `screen.mp4` | The whole call as the bot saw it, 5 frames a second (QuickTime) |
+   | What was said | `captions.jsonl` | Your words under your names; never "You" (that is the bot itself) |
+   | Who spoke when | `speakers.jsonl` | `started`/`stopped` at your turns (`"source": "captions"`) |
+   | Pictures | `camera/<name>.png`, and `pictures sent:` in `try.sh` | One picture per person, also the camera-off one; the counts grow by about 2 a second each |
+   | Meet's real page | `dom/` | Snapshots of the page (send them back: they show how Meet really builds tiles and captions) |
+   | Stop presenting | `bot.log` | `clicking 'Stop presenting' (top bar ...)`, then `screen share stopped (Meet no longer shows the bot presenting)` |
+
+   All sound files and `screen.mp4` start at the same moment, so they line up when played side by side.
+7. Send back the whole run folder as one file (it can be tens of MB):
+
+   ```bash
+   cd output && zip -r round2.zip <run folder name> && cd ..
+   ```
+
+   And a few words: did each person's file hold only that person? How much went to `unknown.wav`? Did
+   the presentation stop on `x`? Was `docker stats` (CPU) fine during the call?
+
+   ```bash
+   docker stats --no-stream $(docker ps -q --filter label=meeting-bot.id)
+   ```
+
+To run without the recordings (lighter): `./try.sh --no-recordings <meet link>`. Captions can be turned off
+for a bot with `"xbot_options": {"captions": false}` in the create request.
+
 ## 1. The one command: `./try.sh`
 
 1. Get the code:
@@ -147,8 +209,8 @@ builds its tiles, video elements, captions and speaking indicator. (Service mode
 | 9 | The bot's clicks still land on Meet while sharing | After `s`, press `x` and then `q`: both work | `screen-share-started-*.png` (shows what was on top) |
 | 10 | Leaving | `q`: the bot leaves; `call_ended [bot_received_leave_call]`, then `done` | `events.jsonl` |
 | 11 | Removed by you | Remove the bot from the call in Meet: `call_ended [bot_kicked_from_call]`, then `done` | `events.jsonl`, `bot.log` |
-| 12 | Each person's picture | `pictures sent: <your name> N` grows by about 2 a second; `output/<run>/camera/<your name>.png` looks like your tile; no picture of the bot | `bot.log` (lines starting `pictures:`), the `camera/` folder |
-| 13 | Who spoke when | `output/<run>/speakers.jsonl` has `started`/`stopped` lines with your name when you talk. If it stays empty, Meet's speaking indicator wasn't recognised: talk, stop, talk again, and send `timeline.jsonl` (its `tile_classes` lines show it; `docs/per-person-audio.md` section 1) | `speakers.jsonl`, `timeline.jsonl`, `bot.log` |
+| 12 | Each person's picture | `pictures sent: <your name> N` grows by about 2 a second, also for a person with the camera off; `output/<run>/camera/<your name>.png` looks like your tile; no picture of the bot | `bot.log` (lines starting `pictures:`; the last one says how many were not sent and why), the `camera/` folder |
+| 13 | Who spoke when | `bot.log` says `captions: turned on (...)`; `output/<run>/captions.jsonl` has your words and `speakers.jsonl` has `started`/`stopped` lines with your name when you talk. If captions could not be turned on, send `dom/` and the screenshots (`docs/per-person-audio.md`) | `captions.jsonl`, `speakers.jsonl`, `bot.log`, `dom/` |
 | 14 | Live view | The link shows the bot's screen (Meet) | - |
 
 **If Meet refuses the bot** ("You can't join this video call", status `fatal [google_meet_bot_blocked]`):
@@ -211,10 +273,12 @@ docker rm -f $(docker ps -aq --filter label=meeting-bot.id)
 
 ## 5. Results (fill in one row per run)
 
-| Run | Date and time | Meet link | `try.sh` or xebit | Got in (yes / no) | Voice heard | Bot hears you | Screen share | People right | Pictures | Final status (`code` / `sub_code`) | Run folder | Notes |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | | | `try.sh` | | | | | | | | | |
-| 2 | | | `try.sh` | | | | | | | | | |
-| 3 | | | `try.sh --per-person-audio` | | | | | | | | | |
-| 4 | | | xebit | | | | | | | | | |
-| 5 | | | xebit | | | | | | | | | |
+| Run | Date and time | Meet link | `try.sh` or xebit | Got in (yes / no) | Voice heard | Bot hears you | Screen share (on / off) | People right | Pictures | Captions / who spoke | Per-person files | Final status (`code` / `sub_code`) | Run folder | Notes |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| R2-1 | | | `try.sh` (Round 2 test) | | | | | | | | | | | |
+| R2-2 | | | `try.sh` (Round 2 test) | | | | | | | | | | | |
+| 1 | | | `try.sh` | | | | | | | | | | | |
+| 2 | | | `try.sh` | | | | | | | | | | | |
+| 3 | | | `try.sh --per-person-audio` | | | | | | | | | | | |
+| 4 | | | xebit | | | | | | | | | | | |
+| 5 | | | xebit | | | | | | | | | | | |
