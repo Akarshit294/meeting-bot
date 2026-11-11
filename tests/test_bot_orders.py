@@ -107,6 +107,16 @@ def test_insecure_origin_flag_only_for_the_test_meeting():
     assert not needs_secure_flag("https://xebit.example/x")
 
 
+def test_browser_time_zone():
+    service = meet_bot.parse_args([MEET], environ={})
+    env = meet_bot.browser_env(service, environ={"PATH": "/bin"})
+    assert env["TZ"] == "Asia/Kolkata" and env["PATH"] == "/bin" and env["PULSE_SOURCE"] == "agent_mic"
+    assert meet_bot.browser_env(service, environ={"BROWSER_TZ": "Europe/Berlin"})["TZ"] == "Europe/Berlin"
+    join_only = meet_bot.parse_args([MEET, "--join-only"], environ={})
+    assert "PULSE_SOURCE" not in meet_bot.browser_env(join_only, environ={})
+    assert meet_bot.browser_env(None, environ={})["TZ"] == "Asia/Kolkata"  # the mouse demo too
+
+
 # ---- config from the manager ----
 
 class FakeManager:

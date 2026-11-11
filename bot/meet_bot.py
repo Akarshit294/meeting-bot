@@ -1180,15 +1180,26 @@ def meet_flags(args: argparse.Namespace | None = None) -> list[str]:
     return flags
 
 
-def launch(p: Playwright, args: argparse.Namespace | None = None):
-    env = None
+# The time zone Meet's browser shows. A browser on UTC behind an Indian internet address does not look like a
+# person; the container's own clock (and every log) stays on UTC. BROWSER_TZ overrides it (BOT_ENV_BROWSER_TZ
+# in the manager's .env): set it to the server's region.
+DEFAULT_BROWSER_TZ = "Asia/Kolkata"
+
+
+def browser_env(args: argparse.Namespace | None = None, environ: dict | None = None) -> dict:
+    environ = os.environ if environ is None else environ
+    env = {**environ, "TZ": environ.get("BROWSER_TZ") or DEFAULT_BROWSER_TZ}
     if args is not None and not args.join_only:
-        env = {**os.environ, "PULSE_SINK": "meet_out", "PULSE_SOURCE": "agent_mic"}
+        env.update(PULSE_SINK="meet_out", PULSE_SOURCE="agent_mic")
+    return env
+
+
+def launch(p: Playwright, args: argparse.Namespace | None = None):
     return p.chromium.launch(
         channel="chrome" if shutil.which("google-chrome") else None,
         headless=False,
         args=meet_flags(args),
-        env=env,
+        env=browser_env(args),
         ignore_default_args=["--enable-automation"],
         handle_sigint=False,
         handle_sigterm=False,

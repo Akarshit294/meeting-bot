@@ -35,7 +35,16 @@ ENV PYTHONUNBUFFERED=1 \
 
 # Both browsers (Meet, and our own pages) are Google Chrome, as in the proven join. Chrome has no arm64
 # Linux build, so there Playwright's Chromium is used instead.
-RUN pip install --no-cache-dir "playwright==${PLAYWRIGHT_VERSION}" \
+# The build installs Google's newest stable Chrome, then keeps it in the build cache: later builds keep that
+# Chrome however old it gets. Change CHROME_REFRESH (any new value, e.g. today's date) to install the newest
+# one; that build takes about 7 minutes. Do it at least every few weeks: Meet refuses a browser that looks
+# odd, and a Chrome left behind by real people's updates is one more oddity. On 2026-11-11 Meet refused the
+# container (Chrome 157.0.8103.38 from the 2026-11-05 build) nearly every time; with the newest Chrome, the
+# fonts below and the time zone (BROWSER_TZ, bot/meet_bot.py) it got in 3 of 3.
+# Why: docs/why-meet-refused-the-bot.md. Check what the browser shows: scripts/browser_check.py.
+ARG CHROME_REFRESH=2026-11-11
+RUN echo "Chrome refresh: ${CHROME_REFRESH}" \
+ && pip install --no-cache-dir "playwright==${PLAYWRIGHT_VERSION}" \
  && if [ "$TARGETARCH" = "arm64" ]; then playwright install --with-deps chromium; \
     else playwright install --with-deps chrome; fi \
  && rm -rf /var/lib/apt/lists/*
@@ -49,6 +58,13 @@ RUN apt-get update \
     > index.html \
  && echo '<meta http-equiv="refresh" content="0; url=vnc.html?autoconnect=true&resize=scale&reconnect=true">' \
     > control.html
+
+# The fonts a Linux desktop has. Without them Chrome had 5 (the Liberation ones), and websites can count
+# fonts: a computer with almost no fonts looks like a server, not a person (2026-11-11, see above).
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends fonts-dejavu-core fonts-noto-core fonts-noto-mono \
+      fonts-noto-color-emoji \
+ && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt /app/
 RUN pip install --no-cache-dir -r /app/requirements.txt

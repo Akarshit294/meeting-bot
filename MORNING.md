@@ -198,6 +198,9 @@ builds its tiles, video elements, captions and speaking indicator. (Service mode
 | 14 | Live view | The link shows the bot's screen (Meet) | - |
 
 **If Meet refuses the bot** ("You can't join this video call", status `fatal [google_meet_bot_blocked]`):
+first read `docs/why-meet-refused-the-bot.md`. Meet refuses a browser that looks odd, and the usual cause
+is an old Chrome in the bot image: build it with the newest one (change `CHROME_REFRESH` in
+`bot/Dockerfile`, about 7 minutes), and don't retry many times in a row. Only if that doesn't help:
 the service mode changes a few Chrome settings compared with the proven join (no fake microphone or
 camera, see `STATUS.md`). Check whether the proven join still works, unchanged:
 
